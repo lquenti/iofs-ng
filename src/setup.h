@@ -178,29 +178,6 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
   return 0;
 }
 
-
-// Parse the buffer for config info. Return an error code or 0 for no error.
-static int parse_config(char *buf, options_t *arguments) {
-  char dummy[BUF_LEN];
-//  printf(buf);
-  if (sscanf(buf, " %s", dummy) == EOF) return 0; // blank line
-  if (sscanf(buf, " %[#]", dummy) == 1) return 0; // comment
-  if (sscanf(buf, " influxdb-address = %s", arguments->in_server) == 1) return 0;
-  if (sscanf(buf, " influxdb-database = %s", arguments->in_db) == 1) return 0;
-  if (sscanf(buf, " influxdb-username = %s", arguments->in_username) == 1) return 0;
-  if (sscanf(buf, " influxdb-password = %s", arguments->in_password) == 1) return 0;
-  if (sscanf(buf, " influxdb-tags = %s", dummy) == 1) return append_tags(arguments, dummy);
-  if (sscanf(buf, " elasticsearch-address = %s", arguments->es_server) == 1) return 0;
-  if (sscanf(buf, " elasticsearch-port = %s", arguments->es_server_port) == 1) return 0;
-  if (sscanf(buf, " elasticsearch-uri = %s", arguments->es_uri) == 1) return 0;
-  if (sscanf(buf, " logfile = %s", arguments->logfile) == 1) return 0;
-  if (sscanf(buf, " outfile = %s", arguments->outfile) == 1) return 0;
-  if (sscanf(buf, " interval = %lu", arguments->interval) == 1) return 0;
-  if (sscanf(buf, " verbosity = %lu", arguments->verbosity) == 1) return 0;
-  if (sscanf(buf, " csv-rw-path = %s", arguments->csv_rw_path) == 1) return 0;
-  return 3; // syntax error
-}
-
 static int append_tags(options_t *arguments, char *tags) {
   if (snprintf(
         arguments->in_tags + strlen(arguments->in_tags),
@@ -208,19 +185,6 @@ static int append_tags(options_t *arguments, char *tags) {
       > BUF_LEN) {
     printf("Could not add tag %s, too many tags", tags);
     return 5;
-  }
-  return 0;
-}
-
-int read_config (char * config_path, options_t *arguments) {
-  FILE *f = fopen(config_path, "r");
-  if (! f) return 1;
-  char buf[BUF_LEN];
-  int line_number = 0;
-  while (fgets(buf, sizeof buf, f)) {
-    ++line_number;
-    int err = parse_config(buf, arguments);
-    if (err) fprintf(stderr, "error line %d: %d\n", line_number, err);
   }
   return 0;
 }

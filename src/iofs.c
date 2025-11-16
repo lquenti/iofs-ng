@@ -58,9 +58,9 @@
 #include <limits.h>
 
 //parsing of cli
-#include <setup.h>
+#include "setup.h"
 
-#include <iofs-monitor.h>
+#include "iofs-monitor.h"
 
 #define START_TIMER() monitor_activity_t activity;  monitor_start_activity(& activity)
 #define END_TIMER(name, count) monitor_end_activity(& activity, & counter[COUNTER_ ## name], count)
@@ -802,23 +802,11 @@ static struct fuse_operations cache_oper = {
 int main(int argc, char *argv[]) {
 
   char config_path[BUF_LEN] = "/etc/iofs.conf";
-  const char * env_config = getenv("IOFS_CONFIG_PATH");
-
-#ifdef IOFS_CONFIG_PATH
-  sprintf(config_path, "%s", IOFS_CONFIG_PATH);
-#endif
-  if (env_config) {
-    sprintf(config_path, "%s", env_config);
-  }
 
   //add hostname to tags
   char hostname[HOST_NAME_MAX + 1 + 5];
   gethostname(hostname, HOST_NAME_MAX + 1);
   sprintf(arguments.in_tags, "host=%s", hostname);
-
-  if (read_config(config_path, &arguments)) {
-    printf("Could not read config file located at %s. See the documentation on how to set the config variable.\n", config_path);
-  }
 
   argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
