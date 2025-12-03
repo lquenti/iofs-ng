@@ -28,7 +28,8 @@
 #define FUSE_USE_VERSION 36
 #define HAVE_UTIMENSAT
 
-#define debug(...)
+// #define debug(...)
+#define debug printf
 
 #ifdef HAVE_CONFIG_H
 #include <config.h>
@@ -816,12 +817,14 @@ int main(int argc, char *argv[]) {
   printf("IOFS-trace version 0.8\nSource path: %s mounted at %s\n", arguments.args[0], prefix);
   umask(0);
 
-  char * newargs[4];
+  char * newargs[6];
   newargs[0] = argv[0];
   newargs[1] = arguments.args[0];
-  newargs[2] = "-o";
-  newargs[3] = "allow_other";
-  int fuse_argc = arguments.use_allow_other ? 4 : 2;
+  newargs[2] = "-f"; // temporary to debug
+  newargs[3] = "-d"; // temporary to debug
+  newargs[4] = "-o";
+  newargs[5] = "allow_other";
+  int fuse_argc = arguments.use_allow_other ? 6 : 4;
 
   int ret = fuse_main(fuse_argc, newargs, &cache_oper, NULL);
   return 0;

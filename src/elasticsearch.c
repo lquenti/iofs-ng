@@ -416,22 +416,23 @@ void monitor_init(monitor_options_t * o){
 
   if (o->outfile) {
     monitor.outfile = fopen(o->outfile, "w+");
-    if(! monitor.outfile) monitor.outfile = fopen(o->outfile, "w");
-    if(! monitor.outfile)
+    if(! monitor.outfile) {
       fprintf(monitor.logfile, "Error: Could not open output file at %s\b", o->outfile);
+      exit(EXIT_FAILURE);
+    }
   }
   memset(monitor.value, 0, sizeof(monitor.value));
 
   fprintf(monitor.logfile, "DEBUG: '%p'\n", o->csv_rw_path);
-  if (o->csv_rw_path) {
+  if (o->csv_rw_path && o->csv_rw_path[0]) {
     monitor.csv_rw_file = fopen(o->csv_rw_path, "w+");
     if(! monitor.csv_rw_file) {
-      fprintf(monitor.logfile, "Error: Could not open output file at %s\b", o->csv_rw_path);
+      fprintf(monitor.logfile, "Error: Could not open output file at %s: %s\n", o->csv_rw_path, strerror(errno));
+      exit(EXIT_FAILURE);
     }
 
     // Write out header
-    fprintf(monitor.csv_rw_file,
-        "timestamp_unix,operation_type,path,offset,bytes_transferred,latency_seconds\n");
+    fprintf(monitor.csv_rw_file, "timestamp_unix,operation_type,path,offset,bytes_transferred,latency_seconds\n");
     fflush(monitor.csv_rw_file);
   }
 
@@ -452,9 +453,15 @@ void monitor_finalize(){
   if(pthread_join(monitor.reporting_thread, NULL)) {
     fprintf(monitor.logfile, "Error joining background thread\n");
   }
-  fclose(monitor.logfile);
-  fclose(monitor.outfile);
-  fclose(monitor.csv_rw_file);
+  if (monitor.logfile) {
+    fclose(monitor.logfile);
+  }
+  if (monitor.outfile) {
+    fclose(monitor.outfile);
+  }
+  if (monitor.csv_rw_file) {
+    fclose(monitor.csv_rw_file);
+  }
   if(options.in_server) {
     curl_easy_cleanup(monitor.curl);
     curl_global_cleanup();
