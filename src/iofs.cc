@@ -7,7 +7,7 @@
    Copyright (C) 2011       Sebastian Pipping <sebastian@pipping.org>
    Copyright (C) 2016       Julian Kunkel <kunkel@dkrz.de>
 
-   This program can be distributed under the terms of the GNU GPL.
+   This program can be distributed under the terms of the GNU LGPL.
    See the file COPYING.
 */
 
@@ -59,9 +59,9 @@
 #include <limits.h>
 
 //parsing of cli
-#include "setup.h"
+#include "setup.hh"
 
-#include "iofs-monitor.h"
+#include "iofs-monitor.hh"
 
 #define START_TIMER() monitor_activity_t activity;  monitor_start_activity(& activity)
 #define END_TIMER(name, count) monitor_end_activity(& activity, & counter[COUNTER_ ## name], count)
@@ -139,7 +139,7 @@ static int cache_opendir(const char *path, struct fuse_file_info *fi)
   prepare_path(path, name_buf);
 
   int res;
-  struct cache_dirp *d = malloc(sizeof(struct cache_dirp));
+  struct cache_dirp *d = (struct cache_dirp *)(malloc(sizeof(struct cache_dirp)));
   if (d == NULL)
     return -ENOMEM;
 
@@ -179,7 +179,7 @@ static int cache_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
   while (1) {
     struct stat st;
     off_t nextoff;
-    enum fuse_fill_dir_flags fill_flags = 0;
+    enum fuse_fill_dir_flags fill_flags = FUSE_FILL_DIR_DEFAULTS;
 
     if (!d->entry) {
       d->entry = readdir(d->dp);
@@ -465,13 +465,13 @@ static int cache_read_buf(const char *path, struct fuse_bufvec **bufp, size_t si
 
   (void) path;
 
-  src = malloc(sizeof(struct fuse_bufvec));
+  src = (struct fuse_bufvec *)(malloc(sizeof(struct fuse_bufvec)));
   if (src == NULL)
     return -ENOMEM;
 
   *src = FUSE_BUFVEC_INIT(size);
 
-  src->buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
+  src->buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
   src->buf[0].fd = fi->fh;
   src->buf[0].pos = offset;
 
@@ -515,7 +515,7 @@ static int cache_write_buf(const char *path, struct fuse_bufvec *buf, off_t offs
 
   (void) path;
 
-  dst.buf[0].flags = FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK;
+  dst.buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
   dst.buf[0].fd = fi->fh;
   dst.buf[0].pos = offset;
 
@@ -728,8 +728,8 @@ static void *cache_init (struct fuse_conn_info *conn, struct fuse_config *cfg){
   monitor_options_t options = {
     .logfile = arguments.logfile,
     .outfile = arguments.outfile,
+    .detailed_logging = 1,
     .verbosity = arguments.verbosity,
-    .interval = arguments.interval,
     .es_server = arguments.es_server,
     .es_server_port = arguments.es_server_port,
     .es_uri = arguments.es_uri,
@@ -738,7 +738,7 @@ static void *cache_init (struct fuse_conn_info *conn, struct fuse_config *cfg){
     .in_username = arguments.in_username,
     .in_password = arguments.in_password,
     .in_tags = arguments.in_tags,
-    .detailed_logging = 1,
+    .interval = arguments.interval,
     .csv_rw_path = arguments.csv_rw_path
   };
 
@@ -752,57 +752,55 @@ static void cache_destroy (void *private_data){
 
 static struct fuse_operations cache_oper = {
   .getattr	= cache_getattr,
-  .access		= cache_access,
   .readlink	= cache_readlink,
-  .opendir	= cache_opendir,
-  .readdir	= cache_readdir,
-  .releasedir	= cache_releasedir,
   .mkdir		= cache_mkdir,
-  .symlink	= cache_symlink,
   .unlink		= cache_unlink,
   .rmdir		= cache_rmdir,
+  .symlink	= cache_symlink,
   .rename		= cache_rename,
   .link		= cache_link,
   .chmod		= cache_chmod,
   .chown		= cache_chown,
   .truncate	= cache_truncate,
-#ifdef HAVE_UTIMENSAT
-  .utimens	= cache_utimens,
-#endif
-  .create		= cache_create,
   .open		= cache_open,
   .read		= cache_read,
   .write		= cache_write,
-#ifdef USE_KERNEL_CACHE
-  .read_buf	= cache_read_buf,
-  .write_buf	= cache_write_buf,
-#endif
   .statfs		= cache_statfs,
   .flush		= cache_flush,
   .release	= cache_release,
   .fsync		= cache_fsync,
-#ifdef HAVE_POSIX_FALLOCATE
-  .fallocate	= cache_fallocate,
-#endif
 #ifdef HAVE_SETXATTR
   .setxattr	= cache_setxattr,
   .getxattr	= cache_getxattr,
   .listxattr	= cache_listxattr,
   .removexattr	= cache_removexattr,
 #endif
+  .opendir	= cache_opendir,
+  .readdir	= cache_readdir,
+  .releasedir	= cache_releasedir,
+  .init     = cache_init,
+  .destroy  = cache_destroy,
+  .access		= cache_access,
+  .create		= cache_create,
 #ifdef HAVE_LIBULOCKMGR
   .lock		= cache_lock,
 #endif
+#ifdef HAVE_UTIMENSAT
+  .utimens	= cache_utimens,
+#endif
+#ifdef USE_KERNEL_CACHE
+  .write_buf	= cache_write_buf,
+  .read_buf	= cache_read_buf,
+#endif
   .flock		= cache_flock,
-  .init     = cache_init,
-  .destroy  = cache_destroy
+#ifdef HAVE_POSIX_FALLOCATE
+  .fallocate	= cache_fallocate
+#endif
 };
 
 
 
 int main(int argc, char *argv[]) {
-
-  char config_path[BUF_LEN] = "/etc/iofs.conf";
 
   //add hostname to tags
   char hostname[HOST_NAME_MAX + 1 + 5];
@@ -820,12 +818,14 @@ int main(int argc, char *argv[]) {
   char * newargs[6];
   newargs[0] = argv[0];
   newargs[1] = arguments.args[0];
-  newargs[2] = "-f"; // temporary to debug
-  newargs[3] = "-d"; // temporary to debug
-  newargs[4] = "-o";
-  newargs[5] = "allow_other";
+  // Unfortunately, `fuse_main` doesn't actually take const char *, thus we stack allocate
+  char arg_fg[] = "-f", arg_dbg[] = "-d", arg_opt1[] = "-o", arg_opt2[] = "allow_other";
+  newargs[2] = arg_fg;
+  newargs[3] = arg_dbg;
+  newargs[4] = arg_opt1;
+  newargs[5] = arg_opt2;
   int fuse_argc = arguments.use_allow_other ? 6 : 4;
 
   int ret = fuse_main(fuse_argc, newargs, &cache_oper, NULL);
-  return 0;
+  return ret;
 }

@@ -2,6 +2,7 @@
  * might later include some config file handling
  */
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,17 +42,17 @@ typedef struct options_t
 
 static int append_tags(options_t *, char *);
 
+// TODO think about whether I might have to default-initialize all of them
 static options_t arguments = {
   .outfile = "/tmp/iofs.out",
   .logfile = "/tmp/iofs.log",
-  .verbosity = 10,
-  .detailed_logging = 1,
-  .interval = 1,
   .es_server = "",
   .in_server = "",
   .in_username = "",
-  .in_server = "",
   .use_allow_other = 0,
+  .verbosity = 10,
+  .detailed_logging = 1,
+  .interval = 1,
   .csv_rw_path = "" // empty path means no sending out
 };
 
@@ -84,7 +85,7 @@ static char doc[] =
 static struct argp argp = {arg_options, parse_opt, args_doc, doc};
 
 static error_t parse_opt (int key, char *arg, struct argp_state *state) {
-  options_t *arguments = state->input;
+  options_t *arguments = static_cast<options_t *>(state->input);
 
   switch (key)
     {
@@ -98,80 +99,84 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
       arguments->use_allow_other = 1;
     case 'l':
       if (snprintf(arguments->logfile, BUF_LEN, "%s", arg) > BUF_LEN) {
-        printf("Input argument %s bigger then %d. Aborting", key, BUF_LEN);
+        printf("Input argument %s bigger then %d. Aborting", arg, BUF_LEN);
         return 1;
       }
       break;
     case 'O':
       if (snprintf(arguments->outfile, BUF_LEN, "%s", arg) > BUF_LEN) {
-        printf("Input argument %s bigger then %d. Aborting", key, BUF_LEN);
+        printf("Input argument %s bigger then %d. Aborting", arg, BUF_LEN);
         return 1;
       }
       break;
     case ES_SERVER:
       if (snprintf(arguments->es_server, BUF_LEN, "%s", arg) > BUF_LEN) {
-        printf("Input argument %s bigger then %d. Aborting", key, BUF_LEN);
+        printf("Input argument %s bigger then %d. Aborting", arg, BUF_LEN);
         return 1;
       }
       break;
     case ES_PORT:
       if (snprintf(arguments->es_server_port, 6, "%s", arg) > 6) {
-        printf("Input argument %s bigger then %d. Aborting", key, 6);
+        printf("Input argument %s bigger then %d. Aborting", arg, 6);
         return 1;
       }
       break;
     case ES_URI:
       if (snprintf(arguments->es_uri, BUF_LEN, "%s", arg) > BUF_LEN) {
-        printf("Input argument %s bigger then %d. Aborting", key, BUF_LEN);
+        printf("Input argument %s bigger then %d. Aborting", arg, BUF_LEN);
         return 1;
       }
       break;
     case IN_SERVER:
       if (snprintf(arguments->in_server, BUF_LEN, "%s", arg) > BUF_LEN) {
-        printf("Input argument %s bigger then %d. Aborting", key, BUF_LEN);
+        printf("Input argument %s bigger then %d. Aborting", arg, BUF_LEN);
         return 1;
       }
       break;
     case IN_DB:
       if (snprintf(arguments->in_db, BUF_LEN, "%s", arg) > BUF_LEN) {
-        printf("Input argument %s bigger then %d. Aborting", key, BUF_LEN);
+        printf("Input argument %s bigger then %d. Aborting", arg, BUF_LEN);
         return 1;
       }
       break;
     case IN_USERNAME:
       if (snprintf(arguments->in_username, BUF_LEN, "%s", arg) > BUF_LEN) {
-        printf("Input argument %s bigger then %d. Aborting", key, BUF_LEN);
+        printf("Input argument %s bigger then %d. Aborting", arg, BUF_LEN);
         return 1;
       }
       break;
     case IN_PASSWORD:
       if (snprintf(arguments->in_password, BUF_LEN, "%s", arg) > BUF_LEN) {
-        printf("Input argument %s bigger then %d. Aborting", key, BUF_LEN);
+        printf("Input argument %s bigger then %d. Aborting", arg, BUF_LEN);
         return 1;
       }
       break;
     case CSV_RW_PATH:
       if (snprintf(arguments->csv_rw_path, BUF_LEN, "%s", arg) > BUF_LEN) {
-        printf("Input argument %s bigger then %d. Aborting", key, BUF_LEN);
+        printf("Input argument %s bigger then %d. Aborting", arg, BUF_LEN);
         return 1;
       }
       break;
-    case 't': ;
+    case 't': {
       //TODO: Do something if this fails
       int ret = append_tags(arguments, arg);
+      assert(ret==0);
       break;
-    case ARGP_KEY_ARG:
+    }
+    case ARGP_KEY_ARG: {
       if (state->arg_num >= 2)
         /* Too many arguments. */
         argp_usage (state);
 
       arguments->args[state->arg_num] = arg;
       break;
-    case ARGP_KEY_END:
+    }
+    case ARGP_KEY_END: {
       if (state->arg_num < 2)
         /* Not enough arguments. */
         argp_usage (state);
       break;
+    }
     default:
       return ARGP_ERR_UNKNOWN;
     }

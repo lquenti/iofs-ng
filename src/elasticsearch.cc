@@ -16,7 +16,7 @@
 #include <sys/ioctl.h>
 #include <curl/curl.h>
 
-#include "iofs-monitor.h"
+#include "iofs-monitor.hh"
 
 enum hist_type_t{
   HIST_READ,
@@ -24,7 +24,7 @@ enum hist_type_t{
   HIST_LAST
 };
 
-static char * hist_names[HIST_LAST] = {"read", "write"};
+static const char * hist_names[HIST_LAST] = {"read", "write"};
 #define HIST_BUCKETS 7
 static int hist_sizes[HIST_BUCKETS - 1] = {4096, 4096*2, 4096*4, 65536, 65536*2, 65536*4};
 
@@ -221,7 +221,7 @@ static void format_influx(char *linep, int lastCounter) {
       ptr += sprintf(ptr,"%s=%d,", hist_names[j], p->count);
     }
     ptr--;
-    ptr += sprintf(ptr, " %d000000000\n", seconds);
+    ptr += sprintf(ptr, " %ld000000000\n", seconds);
   }
 
   char count_str[1024];
@@ -257,11 +257,11 @@ static void format_influx(char *linep, int lastCounter) {
   }
 
   //delete the last , with --
-  sprintf(--count_ptr, " %d000000000", seconds);
-  sprintf(--l_ptr, " %d000000000", seconds);
-  sprintf(--lmean_ptr, " %d000000000", seconds);
-  sprintf(--lmin_ptr, " %d000000000", seconds);
-  sprintf(--lmax_ptr, " %d000000000", seconds);
+  sprintf(--count_ptr, " %ld000000000", seconds);
+  sprintf(--l_ptr, " %ld000000000", seconds);
+  sprintf(--lmean_ptr, " %ld000000000", seconds);
+  sprintf(--lmin_ptr, " %ld000000000", seconds);
+  sprintf(--lmax_ptr, " %ld000000000", seconds);
 
   ptr += sprintf(ptr, "%s\n", count_str);
   if (latency) {
@@ -310,7 +310,8 @@ static void format_json(char * json, int lastCounter) {
 
 }
 
-static void* reporting_thread(void * user){
+static void* reporting_thread(void *unused){
+  (void)unused;
   char json[1024*1024];
   char *linep = (char*) malloc(1024*1024*sizeof(char));
   int lastCounter;
@@ -382,7 +383,7 @@ static inline void update_counter(monitor_counter_internal_t * counter, double t
 static void inline update_hist(enum hist_type_t type, int ts, double t, uint64_t size){
   int i;
   for(i = 0; i < HIST_BUCKETS - 1; i++){
-    if(size < hist_sizes[i]){
+    if(size < static_cast<uint64_t>(hist_sizes[i])){
       break;
     }
   }

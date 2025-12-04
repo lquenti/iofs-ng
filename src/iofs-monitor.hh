@@ -79,7 +79,7 @@ struct monitor_activity_t{
 
 typedef struct monitor_activity_t monitor_activity_t;
 
-// CONTIANED IN elasticsearch.c
+// CONTIANED IN elasticsearch.cc
 void monitor_init(monitor_options_t * options);
 void monitor_finalize();
 
