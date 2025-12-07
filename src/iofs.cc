@@ -23,6 +23,7 @@
  */
 
 // Use if you want to use the kernel cache...
+#include <iostream>
 #define USE_KERNEL_CACHE
 
 #define FUSE_USE_VERSION 36
@@ -59,14 +60,18 @@
 #include <limits.h>
 
 //parsing of cli
-#include "setup.hh"
+#include "cli.hh"
 
 #include "iofs-monitor.hh"
+
 
 #define START_TIMER() monitor_activity_t activity;  monitor_start_activity(& activity)
 #define END_TIMER(name, count) monitor_end_activity(& activity, & counter[COUNTER_ ## name], count)
 
-static char * prefix;
+static CliArgs arguments;
+// TODO refactor
+static std::string global_tags_flattened;
+static const char * prefix;
 typedef char name_buffer[PATH_MAX];
 
 static void prepare_path(const char * path, char * out){
@@ -724,23 +729,43 @@ static void *cache_init (struct fuse_conn_info *conn, struct fuse_config *cfg){
   printf("negative_timeout: %f\n", cfg->negative_timeout);
   printf("attr_timeout: %f\n", cfg->attr_timeout);
 
+  // monitor_options_t options = {
+  //   .logfile = arguments.logfile,
+  //   .outfile = arguments.outfile,
+  //   .detailed_logging = 1,
+  //   .verbosity = arguments.verbosity,
+  //   .es_server = arguments.es_server,
+  //   .es_server_port = arguments.es_server_port,
+  //   .es_uri = arguments.es_uri,
+  //   .in_server = arguments.in_server,
+  //   .in_db = arguments.in_db,
+  //   .in_username = arguments.in_username,
+  //   .in_password = arguments.in_password,
+  //   .in_tags = arguments.in_tags,
+  //   .interval = arguments.interval,
+  //   .csv_rw_path = arguments.csv_rw_path
+  // };
 
-  monitor_options_t options = {
-    .logfile = arguments.logfile,
-    .outfile = arguments.outfile,
-    .detailed_logging = 1,
-    .verbosity = arguments.verbosity,
-    .es_server = arguments.es_server,
-    .es_server_port = arguments.es_server_port,
-    .es_uri = arguments.es_uri,
-    .in_server = arguments.in_server,
-    .in_db = arguments.in_db,
-    .in_username = arguments.in_username,
-    .in_password = arguments.in_password,
-    .in_tags = arguments.in_tags,
-    .interval = arguments.interval,
-    .csv_rw_path = arguments.csv_rw_path
-  };
+  // TODO modernize
+  monitor_options_t options;
+  options.logfile = arguments.logfile.c_str();
+  options.outfile = arguments.outfile.c_str();
+  options.detailed_logging = arguments.detailed_logging ? 1 : 0;
+  options.verbosity = arguments.verbosity;
+  options.es_server = arguments.es_server.has_value() ? arguments.es_server->c_str() : NULL;
+  options.es_server_port = arguments.es_port.c_str();
+  options.es_uri = arguments.es_uri.c_str();
+  options.in_server = arguments.in_server.has_value() ? arguments.in_server->c_str() : NULL;
+  options.in_db = arguments.in_db.c_str();
+  options.in_username = arguments.in_username.c_str();
+  options.in_password = arguments.in_password.c_str();
+  // generated in `main()`
+  options.in_tags = global_tags_flattened.c_str();
+  options.interval = arguments.interval;
+  // Legacy expects empty string
+  options.csv_rw_path = arguments.csv_rw_path.has_value() ? arguments.csv_rw_path->c_str() : "";
+
+  std::cout << "duck: " << arguments.es_server->c_str() << "," << arguments.in_server->c_str() << std::endl;
 
   monitor_init(& options);
   return NULL;
@@ -800,32 +825,46 @@ static struct fuse_operations cache_oper = {
 
 
 
-int main(int argc, char *argv[]) {
+int main(int argc, char **argv) {
+  arguments = parse_args(argc, argv);
 
   //add hostname to tags
   char hostname[HOST_NAME_MAX + 1 + 5];
   gethostname(hostname, HOST_NAME_MAX + 1);
-  sprintf(arguments.in_tags, "host=%s", hostname);
+  arguments.in_tags.push_back(std::string("host=") + hostname);
 
-  argp_parse(&argp, argc, argv, 0, 0, &arguments);
+  // Flatten vector into C-str
+  for (size_t i{0}; i<arguments.in_tags.size(); ++i) {
+    global_tags_flattened += arguments.in_tags[i];
+    if (i<arguments.in_tags.size()-1) {
+      global_tags_flattened += ",";
+    }
+  }
 
   //add hostname to tags
-  prefix = arguments.args[1];
+  prefix = arguments.source_dir.c_str();
 
-  printf("IOFS-trace version 0.8\nSource path: %s mounted at %s\n", arguments.args[0], prefix);
+  printf("IOFS-trace version 0.8\nSource path: %s mounted at %s\n", arguments.source_dir.c_str(),
+      arguments.mountpoint.c_str());
   umask(0);
 
-  char * newargs[6];
-  newargs[0] = argv[0];
-  newargs[1] = arguments.args[0];
-  // Unfortunately, `fuse_main` doesn't actually take const char *, thus we stack allocate
-  char arg_fg[] = "-f", arg_dbg[] = "-d", arg_opt1[] = "-o", arg_opt2[] = "allow_other";
-  newargs[2] = arg_fg;
-  newargs[3] = arg_dbg;
-  newargs[4] = arg_opt1;
-  newargs[5] = arg_opt2;
-  int fuse_argc = arguments.use_allow_other ? 6 : 4;
+  std::string mountpoint_str = arguments.mountpoint.string();
+  char arg_fg[] = "-f";
+  char arg_dbg[] = "-d";
+  char arg_opt_kern[] = "-o";
+  char arg_opt_allow[] = "allow_other";
 
-  int ret = fuse_main(fuse_argc, newargs, &cache_oper, NULL);
+  std::vector<char*> fuse_args;
+  fuse_args.push_back(argv[0]);                  // Program name
+  fuse_args.push_back(mountpoint_str.data());    // Mountpoint
+  fuse_args.push_back(arg_fg);                   // Foreground
+  fuse_args.push_back(arg_dbg);                  // Debug/Verbose
+
+  if (arguments.use_allow_other) {
+      fuse_args.push_back(arg_opt_kern);
+      fuse_args.push_back(arg_opt_allow);
+  }
+
+  int ret = fuse_main(static_cast<int>(fuse_args.size()), fuse_args.data(), &cache_oper, NULL);
   return ret;
 }

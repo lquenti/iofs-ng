@@ -2,6 +2,7 @@
 g++ -fsanitize=address -g \
   -Wall \
   -std=c++23 \
+  -Iinclude \
   src/*.cc \
   `pkg-config fuse3 --cflags --libs` -lcurl \
   -o iofs

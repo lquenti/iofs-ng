@@ -146,7 +146,7 @@ static void es_send(char* data, int len){
 
 static void submit_to_es(char * json, int json_len){
 
-  if(! options.es_server ) return;
+  if(options.es_server == NULL) return;
 
   if (monitor.es_fd == 0){
     struct addrinfo hints;
@@ -348,9 +348,9 @@ static void* reporting_thread(void *unused){
     }
 
     if (! first_iteration) {
-      if (options.es_server[0] != '\0')
+      if (options.es_server != NULL)
         submit_to_es(json, (int)(ptr - json));
-      if (options.in_server[0] != '\0')
+      if (options.in_server != NULL)
         curl_to_influx(linep);
     }
 
@@ -463,7 +463,7 @@ void monitor_finalize(){
   if (monitor.csv_rw_file) {
     fclose(monitor.csv_rw_file);
   }
-  if(options.in_server) {
+  if(options.in_server != NULL) {
     curl_easy_cleanup(monitor.curl);
     curl_global_cleanup();
   }

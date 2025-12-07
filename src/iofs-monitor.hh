@@ -1,5 +1,4 @@
-#ifndef IOFS_MONITOR_H
-#define IOFS_MONITOR_H
+#pragma once
 
 #include <stdint.h>
 #include <string.h>
@@ -47,20 +46,20 @@ enum counter_type_t{
 };
 
 typedef struct {
-  char * logfile;
-  char * outfile;
+  const char * logfile;
+  const char * outfile;
   int detailed_logging;
   int verbosity;
-  char * es_server;
-  char * es_server_port;
-  char * es_uri;
-  char * in_server;
-  char * in_db;
-  char * in_username;
-  char * in_password;
-  char * in_tags;
+  const char * es_server;
+  const char * es_server_port;
+  const char * es_uri;
+  const char * in_server;
+  const char * in_db;
+  const char * in_username;
+  const char * in_password;
+  const char * in_tags;
   int interval;
-  char * csv_rw_path;
+  const char * csv_rw_path;
 } monitor_options_t;
 
 struct monitor_counter_t{
@@ -87,5 +86,3 @@ void monitor_start_activity(monitor_activity_t* activity);
 void monitor_end_activity(monitor_activity_t* activity, monitor_counter_t * counter, uint64_t value);
 
 void log_rw_to_csv(const char *op_path, const char *op_type, size_t offset, size_t bytes, double latency);
-
-#endif
