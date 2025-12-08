@@ -5,4 +5,4 @@ g++ -fsanitize=address -g \
   -Iinclude \
   src/*.cc \
   `pkg-config fuse3 --cflags --libs` -lcurl \
-  -o iofs
+  -o iofs-ng

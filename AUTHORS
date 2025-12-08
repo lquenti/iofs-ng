@@ -1,0 +1,13 @@
+/*
+   This module is based on a FUSE example module but allows mounting
+   a subtree instead of the full file system.
+
+
+   Copyright (C) 2001-2007  Miklos Szeredi <miklos@szeredi.hu>
+   Copyright (C) 2011       Sebastian Pipping <sebastian@pipping.org>
+   Copyright (C) 2016       Julian Kunkel <kunkel@dkrz.de>
+   Copyright (C) 2025       Lars Quentin <lars@lquenti.de>
+
+   This program can be distributed under the terms of the GNU LGPL.
+   See the file LICENSE.
+*/

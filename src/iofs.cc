@@ -1,46 +1,15 @@
-/*
-   This module is based on a FUSE example module but allows mounting
-   a subtree instead of the full file system.
+// Use if you want to enable zero copy through splicing
+#define USE_ZERO_COPY
 
-
-   Copyright (C) 2001-2007  Miklos Szeredi <miklos@szeredi.hu>
-   Copyright (C) 2011       Sebastian Pipping <sebastian@pipping.org>
-   Copyright (C) 2016       Julian Kunkel <kunkel@dkrz.de>
-
-   This program can be distributed under the terms of the GNU LGPL.
-   See the file COPYING.
-*/
-
-/** @file
- * @tableofcontents
- *
- * \section section_compile compiling this example
- *
- * gcc -Wall iofs.c `pkg-config fuse3 --cflags --libs` -lulockmgr -o iofs
- *
- * ./iofs -o kernel_cache -o max_write=$((1024*1024*10)) -o big_writes -o allow_other  <TARGET> <SRC>
- *  ./iofs -o allow_other,entry_timeout=360,ro,attr_timeout=360,ac_attr_timeout=360,negative_timeout=360,kernel_cache -o max_idle_threads=16 -f /dev/test $PWD/src
- */
-
-// Use if you want to use the kernel cache...
 #include <iostream>
-#define USE_KERNEL_CACHE
+#include <vector>
 
 #define FUSE_USE_VERSION 36
 #define HAVE_UTIMENSAT
 
-// #define debug(...)
-#define debug printf
-
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
+#define debug(...)
 
 #include <fuse.h>
-
-#ifdef HAVE_LIBULOCKMGR
-#include <ulockmgr.h>
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,9 +20,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <sys/time.h>
-#ifdef HAVE_SETXATTR
 #include <sys/xattr.h>
-#endif
 #include <sys/file.h> /* flock(2) */
 
 #include <unistd.h>
@@ -62,15 +29,10 @@
 //parsing of cli
 #include "cli.hh"
 
-#include "iofs-monitor.hh"
+#define START_TIMER(...)
+#define END_TIMER(...)
 
-
-#define START_TIMER() monitor_activity_t activity;  monitor_start_activity(& activity)
-#define END_TIMER(name, count) monitor_end_activity(& activity, & counter[COUNTER_ ## name], count)
-
-static CliArgs arguments;
 // TODO refactor
-static std::string global_tags_flattened;
 static const char * prefix;
 typedef char name_buffer[PATH_MAX];
 
@@ -91,9 +53,6 @@ static int cache_getattr(const char *path, struct stat *stbuf, struct fuse_file_
   if (res == -1){
     return -errno;
   }
-  clock_t t_end_op = clock();
-  double operation_latency_seconds = ((double)(t_end_op - activity.t_start)) / CLOCKS_PER_SEC;
-  log_rw_to_csv(path, "getattr", 0, 1, operation_latency_seconds);
   return 0;
 }
 
@@ -191,15 +150,14 @@ static int cache_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
       if (!d->entry)
         break;
     }
-#ifdef HAVE_FSTATAT
     if (flags & FUSE_READDIR_PLUS) {
       int res;
 
       res = fstatat(dirfd(d->dp), d->entry->d_name, &st, AT_SYMLINK_NOFOLLOW);
       if (res != -1)
-        fill_flags |= FUSE_FILL_DIR_PLUS;
+        fill_flags = static_cast<fuse_fill_dir_flags>(fill_flags | FUSE_FILL_DIR_PLUS);
+
     }
-#endif
     if (!(fill_flags & FUSE_FILL_DIR_PLUS)) {
       memset(&st, 0, sizeof(st));
       st.st_ino = d->entry->d_ino;
@@ -384,7 +342,6 @@ static int cache_truncate(const char *path, off_t size, struct fuse_file_info *f
 }
 
 
-#ifdef HAVE_UTIMENSAT
 static int cache_utimens(const char *path, const struct timespec ts[2], struct fuse_file_info *fi){
   debug("%s\n", __PRETTY_FUNCTION__);
   int res;
@@ -400,7 +357,6 @@ static int cache_utimens(const char *path, const struct timespec ts[2], struct f
 
   return 0;
 }
-#endif
 
 static int cache_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
@@ -432,10 +388,6 @@ static int cache_open(const char *path, struct fuse_file_info *fi)
   if (fd == -1)
     return -errno;
 
-  clock_t t_end_op = clock();
-  double operation_latency_seconds = ((double)(t_end_op - activity.t_start)) / CLOCKS_PER_SEC;
-  log_rw_to_csv(path, "open", 0, 1, operation_latency_seconds);
-
   fi->fh = fd;
   return 0;
 }
@@ -449,12 +401,6 @@ static int cache_read(const char *path, char *buf, size_t size, off_t offset,
 
   res = pread(fi->fh, buf, size, offset);
   END_TIMER(READ, res);
-
-  if (res > 0) {
-    clock_t t_end_op = clock();
-    double operation_latency_seconds = ((double)(t_end_op - activity.t_start)) / CLOCKS_PER_SEC;
-    log_rw_to_csv(path, "read", offset, res, operation_latency_seconds);
-  }
 
   if (res == -1)
     res = -errno;
@@ -483,10 +429,6 @@ static int cache_read_buf(const char *path, struct fuse_bufvec **bufp, size_t si
   *bufp = src;
   END_TIMER(READ_BUF, size);
 
-  clock_t t_end_op = clock();
-  double operation_latency_seconds = ((double)(t_end_op - activity.t_start)) / CLOCKS_PER_SEC;
-  log_rw_to_csv(path, "read", offset, size, operation_latency_seconds);
-
   return 0;
 }
 
@@ -498,12 +440,6 @@ static int cache_write(const char *path, const char *buf, size_t size, off_t off
 
   res = pwrite(fi->fh, buf, size, offset);
   END_TIMER(WRITE, res);
-
-  if (res > 0) {
-    clock_t t_end_op = clock();
-    double operation_latency_seconds = ((double)(t_end_op - activity.t_start)) / CLOCKS_PER_SEC;
-    log_rw_to_csv(path, "write", offset, res, operation_latency_seconds);
-  }
 
   if (res == -1)
     res = -errno;
@@ -526,10 +462,6 @@ static int cache_write_buf(const char *path, struct fuse_bufvec *buf, off_t offs
 
   int ret = fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK);
   END_TIMER(WRITE_BUF, size);
-
-  clock_t t_end_op = clock();
-  double operation_latency_seconds = ((double)(t_end_op - activity.t_start)) / CLOCKS_PER_SEC;
-  log_rw_to_csv(path, "write", offset, size, operation_latency_seconds);
 
   return ret;
 }
@@ -577,8 +509,7 @@ static int cache_release(const char *path, struct fuse_file_info *fi)
   return 0;
 }
 
-static int cache_fsync(const char *path, int isdatasync,
-    struct fuse_file_info *fi)
+static int cache_fsync(const char *path, int isdatasync, struct fuse_file_info *fi)
 {
   debug("%s\n", __PRETTY_FUNCTION__);
   int res;
@@ -599,7 +530,6 @@ static int cache_fsync(const char *path, int isdatasync,
   return 0;
 }
 
-#ifdef HAVE_POSIX_FALLOCATE
 static int cache_fallocate(const char *path, int mode,
     off_t offset, off_t length, struct fuse_file_info *fi)
 {
@@ -614,9 +544,7 @@ static int cache_fallocate(const char *path, int mode,
   END_TIMER(FALLOCATE, 1);
   return ret;
 }
-#endif
 
-#ifdef HAVE_SETXATTR
 /* xattr operations are optional and can safely be left unimplemented */
 static int cache_setxattr(const char *path, const char *name, const char *value,
     size_t size, int flags)
@@ -675,21 +603,6 @@ static int cache_removexattr(const char *path, const char *name)
     return -errno;
   return 0;
 }
-#endif /* HAVE_SETXATTR */
-
-#ifdef HAVE_LIBULOCKMGR
-static int cache_lock(const char *path, struct fuse_file_info *fi, int cmd,
-    struct flock *lock)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-
-  START_TIMER();
-  int ret = ulockmgr_op(fi->fh, cmd, lock, &fi->lock_owner,
-      sizeof(fi->lock_owner));
-  END_TIMER(LOCK, 1);
-  return ret;
-}
-#endif
 
 static int cache_flock(const char *path, struct fuse_file_info *fi, int op)
 {
@@ -729,50 +642,11 @@ static void *cache_init (struct fuse_conn_info *conn, struct fuse_config *cfg){
   printf("negative_timeout: %f\n", cfg->negative_timeout);
   printf("attr_timeout: %f\n", cfg->attr_timeout);
 
-  // monitor_options_t options = {
-  //   .logfile = arguments.logfile,
-  //   .outfile = arguments.outfile,
-  //   .detailed_logging = 1,
-  //   .verbosity = arguments.verbosity,
-  //   .es_server = arguments.es_server,
-  //   .es_server_port = arguments.es_server_port,
-  //   .es_uri = arguments.es_uri,
-  //   .in_server = arguments.in_server,
-  //   .in_db = arguments.in_db,
-  //   .in_username = arguments.in_username,
-  //   .in_password = arguments.in_password,
-  //   .in_tags = arguments.in_tags,
-  //   .interval = arguments.interval,
-  //   .csv_rw_path = arguments.csv_rw_path
-  // };
-
-  // TODO modernize
-  monitor_options_t options;
-  options.logfile = arguments.logfile.c_str();
-  options.outfile = arguments.outfile.c_str();
-  options.detailed_logging = arguments.detailed_logging ? 1 : 0;
-  options.verbosity = arguments.verbosity;
-  options.es_server = arguments.es_server.has_value() ? arguments.es_server->c_str() : NULL;
-  options.es_server_port = arguments.es_port.c_str();
-  options.es_uri = arguments.es_uri.c_str();
-  options.in_server = arguments.in_server.has_value() ? arguments.in_server->c_str() : NULL;
-  options.in_db = arguments.in_db.c_str();
-  options.in_username = arguments.in_username.c_str();
-  options.in_password = arguments.in_password.c_str();
-  // generated in `main()`
-  options.in_tags = global_tags_flattened.c_str();
-  options.interval = arguments.interval;
-  // Legacy expects empty string
-  options.csv_rw_path = arguments.csv_rw_path.has_value() ? arguments.csv_rw_path->c_str() : "";
-
-  std::cout << "duck: " << arguments.es_server->c_str() << "," << arguments.in_server->c_str() << std::endl;
-
-  monitor_init(& options);
   return NULL;
 }
 
-static void cache_destroy (void *private_data){
-  monitor_finalize();
+static void cache_destroy(void *private_data){
+  (void)private_data;
 }
 
 static struct fuse_operations cache_oper = {
@@ -794,12 +668,10 @@ static struct fuse_operations cache_oper = {
   .flush		= cache_flush,
   .release	= cache_release,
   .fsync		= cache_fsync,
-#ifdef HAVE_SETXATTR
   .setxattr	= cache_setxattr,
   .getxattr	= cache_getxattr,
   .listxattr	= cache_listxattr,
   .removexattr	= cache_removexattr,
-#endif
   .opendir	= cache_opendir,
   .readdir	= cache_readdir,
   .releasedir	= cache_releasedir,
@@ -807,48 +679,30 @@ static struct fuse_operations cache_oper = {
   .destroy  = cache_destroy,
   .access		= cache_access,
   .create		= cache_create,
-#ifdef HAVE_LIBULOCKMGR
-  .lock		= cache_lock,
-#endif
-#ifdef HAVE_UTIMENSAT
   .utimens	= cache_utimens,
-#endif
-#ifdef USE_KERNEL_CACHE
+#ifdef USE_ZERO_COPY
   .write_buf	= cache_write_buf,
   .read_buf	= cache_read_buf,
 #endif
   .flock		= cache_flock,
-#ifdef HAVE_POSIX_FALLOCATE
   .fallocate	= cache_fallocate
-#endif
 };
 
 
 
 int main(int argc, char **argv) {
+  CliArgs arguments;
   arguments = parse_args(argc, argv);
 
   //add hostname to tags
   char hostname[HOST_NAME_MAX + 1 + 5];
   gethostname(hostname, HOST_NAME_MAX + 1);
-  arguments.in_tags.push_back(std::string("host=") + hostname);
 
-  // Flatten vector into C-str
-  for (size_t i{0}; i<arguments.in_tags.size(); ++i) {
-    global_tags_flattened += arguments.in_tags[i];
-    if (i<arguments.in_tags.size()-1) {
-      global_tags_flattened += ",";
-    }
-  }
-
-  //add hostname to tags
   prefix = arguments.source_dir.c_str();
-
-  printf("IOFS-trace version 0.8\nSource path: %s mounted at %s\n", arguments.source_dir.c_str(),
-      arguments.mountpoint.c_str());
   umask(0);
 
   std::string mountpoint_str = arguments.mountpoint.string();
+  // TODO put into cli.cc
   char arg_fg[] = "-f";
   char arg_dbg[] = "-d";
   char arg_opt_kern[] = "-o";
