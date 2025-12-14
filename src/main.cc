@@ -1,5 +1,5 @@
-// Use if you want to enable zero copy through splicing
 #include <filesystem>
+// Use if you want to enable zero copy through splicing
 #define USE_ZERO_COPY
 
 #include <vector>
@@ -349,7 +349,7 @@ static int cache_utimens(const char *path, const struct timespec ts[2], struct f
   prepare_path(path, name_buf);
 
   /* don't use utime/utimes since they follow symlinks */
-  res = utimensat(0, name_buf, ts, AT_SYMLINK_NOFOLLOW);
+  res = utimensat(AT_FDCWD, name_buf, ts, AT_SYMLINK_NOFOLLOW);
   END_TIMER(UTIMENS, 1);
   if (res == -1)
     return -errno;

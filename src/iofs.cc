@@ -1,3 +1,6 @@
+// Use if you want to enable zero copy through splicing
+#define USE_ZERO_COPY
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -79,8 +82,10 @@ class IOFS {
     int access(const char *path, int mask);
     int create(const char *path, mode_t mode, fuse_file_info *fi);
     int utimens(const char *path, const timespec ts[2], fuse_file_info *fi);
+#ifdef USE_ZERO_COPY
     int write_buf(const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi);
     int read_buf(const char *path, fuse_bufvec **bufp, size_t size, off_t offset, fuse_file_info *fi);
+#endif
     int flock(const char *path, fuse_file_info *fi, int op);
     int fallocate(const char *path, int mode, off_t offset, off_t length, fuse_file_info *fi);
   private:
