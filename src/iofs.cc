@@ -134,8 +134,10 @@ struct fuse_operations iofs_oper = {
   // .bmap    = nullptr,
   // .ioctl   = nullptr,
   // .poll    = nullptr,
+#ifdef USE_ZERO_COPY
   .write_buf  = [](auto ...args) { return get_fs()->write_buf(args...); },
   .read_buf   = [](auto ...args) { return get_fs()->read_buf(args...); },
+#endif
   .flock      = [](auto ...args) { return get_fs()->flock(args...); },
   .fallocate  = [](auto ...args) { return get_fs()->fallocate(args...); },
 };
@@ -256,7 +258,7 @@ int IOFS::write([[maybe_unused]] const char *path, const char *buf, size_t size,
 int IOFS::statfs(const char *path, struct statvfs *stbuf) {
   TimerGuard timer{IOOp::statfs};
   auto full_path{resolve_path(path)};
-  int res{::statvfs(path, stbuf)};
+  int res{::statvfs(full_path.c_str(), stbuf)};
   return (res == -1) ? -errno : 0;
 }
 
@@ -496,6 +498,7 @@ int IOFS::utimens(const char *path, const timespec ts[2], [[maybe_unused]] fuse_
   return (res == -1) ? -errno : 0;
 }
 
+#ifdef USE_ZERO_COPY
 int IOFS::write_buf([[maybe_unused]] const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi) {
   TimerGuard timer{IOOp::write_buf, 0};
   size_t size{fuse_buf_size(buf)};
@@ -526,6 +529,7 @@ int IOFS::read_buf([[maybe_unused]] const char *path, fuse_bufvec **bufp, size_t
   *bufp = src;
   return 0;
 }
+#endif
 
 int IOFS::flock([[maybe_unused]] const char *path, fuse_file_info *fi, int op) {
   TimerGuard timer{IOOp::flock};
