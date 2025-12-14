@@ -44,6 +44,8 @@ CliArgs parse_args(int argc, char **argv) {
 
 static IOFS *get_fs() { return static_cast<IOFS *>(fuse_get_context()->private_data); }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 struct fuse_operations iofs_oper = {
     .getattr = [](auto... args) { return get_fs()->getattr(args...); },
     .readlink = [](auto... args) { return get_fs()->readlink(args...); },
@@ -88,6 +90,7 @@ struct fuse_operations iofs_oper = {
     .flock = [](auto... args) { return get_fs()->flock(args...); },
     .fallocate = [](auto... args) { return get_fs()->fallocate(args...); },
 };
+#pragma GCC diagnostic pop
 
 int main(int argc, char **argv) {
   CliArgs arguments{parse_args(argc, argv)};

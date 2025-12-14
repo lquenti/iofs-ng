@@ -1,6 +1,5 @@
-# TODO add -Wall -Wextra -Wpedantic -Wold-style-cast -Wconversion -Wsign-conversion -Wshadow -Wnon-virtual-dtor \
 g++ -fsanitize=address -g \
-  -Wall \
+  -Wall -Wextra -Wpedantic -Wold-style-cast -Wconversion -Wsign-conversion -Wshadow -Wnon-virtual-dtor \
   -std=c++23 \
   -Iinclude \
   src/*.cc \

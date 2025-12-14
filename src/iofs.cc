@@ -116,13 +116,13 @@ int IOFS::open(const char *path, fuse_file_info *fi) {
   if (fd == -1) {
     return -errno;
   }
-  fi->fh = fd;
+  fi->fh = static_cast<uint64_t>(fd);
   return 0;
 }
 
 int IOFS::read([[maybe_unused]] const char *path, char *buf, size_t size, off_t offset, fuse_file_info *fi) {
   TimerGuard timer{IOOp::read, 0};
-  ssize_t res{::pread(fi->fh, buf, size, offset)};
+  ssize_t res{::pread(static_cast<int>(fi->fh), buf, size, offset)};
   if (res == -1) {
     return -errno;
   }
@@ -132,7 +132,7 @@ int IOFS::read([[maybe_unused]] const char *path, char *buf, size_t size, off_t 
 
 int IOFS::write([[maybe_unused]] const char *path, const char *buf, size_t size, off_t offset, fuse_file_info *fi) {
   TimerGuard timer{IOOp::write, 0};
-  ssize_t res{::pwrite(fi->fh, buf, size, offset)};
+  ssize_t res{::pwrite(static_cast<int>(fi->fh), buf, size, offset)};
   if (res == -1) {
     return -errno;
   }
@@ -154,13 +154,13 @@ int IOFS::flush([[maybe_unused]] const char *path, fuse_file_info *fi) {
      called multiple times for an open file, this must not really
      close the file.  This is important if used on a network
      filesystem like NFS which flush the data/metadata on close() */
-  int res{::close(::dup(fi->fh))};
+  int res{::close(::dup(static_cast<int>(fi->fh)))};
   return (res == -1) ? -errno : 0;
 }
 
 int IOFS::release([[maybe_unused]] const char *path, fuse_file_info *fi) {
   TimerGuard timer{IOOp::release};
-  ::close(fi->fh);
+  ::close(static_cast<int>(fi->fh));
   return 0;
 }
 
@@ -168,9 +168,9 @@ int IOFS::fsync([[maybe_unused]] const char *path, int isdatasync, fuse_file_inf
   TimerGuard timer{IOOp::fsync};
   int res;
   if (isdatasync) {
-    res = ::fdatasync(fi->fh);
+    res = ::fdatasync(static_cast<int>(fi->fh));
   } else {
-    res = ::fsync(fi->fh);
+    res = ::fsync(static_cast<int>(fi->fh));
   }
   return (res == -1) ? -errno : 0;
 }
@@ -317,14 +317,14 @@ int IOFS::readdir([[maybe_unused]] const char *path, void *buf, fuse_fill_dir_t 
   return 0;
 }
 
-int IOFS::releasedir(const char *path, fuse_file_info *fi) {
+int IOFS::releasedir([[maybe_unused]] const char *path, fuse_file_info *fi) {
   TimerGuard timer{IOOp::releasedir};
   // re-take ownership (released in opendir) to get RAII cleanup
   std::unique_ptr<DirHandle> d{reinterpret_cast<DirHandle *>(fi->fh)};
   return 0;
 }
 
-void *IOFS::init(fuse_conn_info *conn, fuse_config *cfg) {
+void *IOFS::init([[maybe_unused]] fuse_conn_info *conn, fuse_config *cfg) {
   // The initing of the IOFS object (i.e. the construction) already happens in
   // main (passed to FUSE via `user_data` parameter of `fuse_main`) I think its
   // cleaner to handle IOFS creation problems *before* already being in FUSE
@@ -373,7 +373,7 @@ int IOFS::create(const char *path, mode_t mode, fuse_file_info *fi) {
   if (fd == -1) {
     return -errno;
   }
-  fi->fh = fd;
+  fi->fh = static_cast<uint64_t>(fd);
   return 0;
 }
 
@@ -389,9 +389,16 @@ int IOFS::utimens(const char *path, const timespec ts[2], [[maybe_unused]] fuse_
 int IOFS::write_buf([[maybe_unused]] const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi) {
   TimerGuard timer{IOOp::write_buf, 0};
   size_t size{fuse_buf_size(buf)};
+
+  // This is a C style macro, but thats fine...
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wold-style-cast"
+  #pragma GCC diagnostic ignored "-Wpedantic"
   struct fuse_bufvec dst = FUSE_BUFVEC_INIT(size);
+  #pragma GCC diagnostic pop
+
   dst.buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
-  dst.buf[0].fd = fi->fh;
+  dst.buf[0].fd = static_cast<int>(fi->fh);
   dst.buf[0].pos = offset;
   ssize_t res{fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK)};
   if (res >= 0) {
@@ -409,9 +416,16 @@ int IOFS::read_buf([[maybe_unused]] const char *path, fuse_bufvec **bufp, size_t
     return -ENOMEM;
   }
   timer.update_size(size);
+
+  // This is a C style macro, but thats fine...
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Wold-style-cast"
+  #pragma GCC diagnostic ignored "-Wpedantic"
   *src = FUSE_BUFVEC_INIT(size);
+  #pragma GCC diagnostic pop
+
   src->buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
-  src->buf[0].fd = fi->fh;
+  src->buf[0].fd = static_cast<int>(fi->fh);
   src->buf[0].pos = offset;
   *bufp = src;
   return 0;
@@ -420,7 +434,7 @@ int IOFS::read_buf([[maybe_unused]] const char *path, fuse_bufvec **bufp, size_t
 
 int IOFS::flock([[maybe_unused]] const char *path, fuse_file_info *fi, int op) {
   TimerGuard timer{IOOp::flock};
-  int res{::flock(fi->fh, op)};
+  int res{::flock(static_cast<int>(fi->fh), op)};
   return (res == -1) ? -errno : 0;
 }
 int IOFS::fallocate([[maybe_unused]] const char *path, int mode, off_t offset, off_t length, fuse_file_info *fi) {
@@ -428,7 +442,7 @@ int IOFS::fallocate([[maybe_unused]] const char *path, int mode, off_t offset, o
     return -EOPNOTSUPP;
   }
   TimerGuard timer{IOOp::fallocate};
-  int err{::posix_fallocate(fi->fh, offset, length)};
+  int err{::posix_fallocate(static_cast<int>(fi->fh), offset, length)};
   return -err;
 }
 
