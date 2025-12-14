@@ -1,5 +1,5 @@
-// Use if you want to enable zero copy through splicing
-#define USE_ZERO_COPY
+
+#include "iofs.hh"
 
 #include <chrono>
 #include <cstdio>
@@ -18,23 +18,6 @@
 #include <sys/file.h>
 #include <print>
 
-enum class IOOp {
-  getattr, readlink, mkdir, unlink, rmdir, symlink, rename, link, chmod, chown, truncate, open, read, write,
-  statfs, flush, release, fsync, setxattr, getxattr, listxattr, removexattr, opendir, readdir, releasedir,
-  access, create, utimens, write_buf, read_buf, flock, fallocate
-};
-
-class TimerGuard {
-  public:
-    using clock_type = std::chrono::high_resolution_clock;
-    explicit TimerGuard(IOOp op, size_t init_s=1) : m_operation{op}, m_size{init_s}, m_start{clock_type::now()} {}
-    ~TimerGuard();
-    void update_size(size_t s);
-  private:
-    IOOp m_operation;
-    size_t m_size;
-    clock_type::time_point m_start;
-};
 
 TimerGuard::~TimerGuard() {
   auto end{clock_type::now()};
@@ -45,102 +28,6 @@ TimerGuard::~TimerGuard() {
 void TimerGuard::update_size(size_t s) {
   m_size=s;
 }
-
-
-// See `fuse_operations` struct definition for description on the operations
-class IOFS {
-  public:
-    explicit IOFS(std::filesystem::path root) : m_source_root{std::move(root)} {}
-    int getattr(const char *path, struct stat *stbuf, fuse_file_info *fi);
-    int readlink(const char *path, char *buf, size_t size);
-    int mkdir(const char *path, mode_t mode);
-    int unlink(const char *path);
-    int rmdir(const char *path);
-    int symlink(const char *from, const char *to);
-    int rename(const char *from, const char *to, unsigned int flags);
-    int link(const char *from, const char *to);
-    int chmod(const char *path, mode_t mode, fuse_file_info *fi);
-    int chown(const char *path, uid_t uid, gid_t gid, fuse_file_info *fi);
-    int truncate(const char *path, off_t size, fuse_file_info *fi);
-    int open(const char *path, fuse_file_info *fi);
-    int read(const char *path, char *buf, size_t size, off_t offset, fuse_file_info *fi);
-    int write(const char *path, const char *buf, size_t size, off_t offset, fuse_file_info *fi);
-    int statfs(const char *path, struct statvfs *stbuf);
-    int flush(const char *path, fuse_file_info *fi);
-    int release(const char *path, fuse_file_info *fi);
-    int fsync(const char *path, int isdatasync, fuse_file_info *fi);
-    int setxattr(const char *path, const char *name, const char *value, size_t size, int flags);
-    int getxattr(const char *path, const char *name, char *value, size_t size);
-    int listxattr(const char *path, char *list, size_t size);
-    int removexattr(const char *path, const char *name);
-    int opendir(const char *path, fuse_file_info *fi);
-    int readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, fuse_file_info *fi,
-        fuse_readdir_flags flags);
-    int releasedir(const char *path, fuse_file_info *fi);
-    void *init(fuse_conn_info *conn, fuse_config *cfg);
-    void destroy(void *private_data);
-    int access(const char *path, int mask);
-    int create(const char *path, mode_t mode, fuse_file_info *fi);
-    int utimens(const char *path, const timespec ts[2], fuse_file_info *fi);
-#ifdef USE_ZERO_COPY
-    int write_buf(const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi);
-    int read_buf(const char *path, fuse_bufvec **bufp, size_t size, off_t offset, fuse_file_info *fi);
-#endif
-    int flock(const char *path, fuse_file_info *fi, int op);
-    int fallocate(const char *path, int mode, off_t offset, off_t length, fuse_file_info *fi);
-  private:
-    std::filesystem::path m_source_root;
-    std::filesystem::path resolve_path(const char *path) const;
-};
-
-static IOFS *get_fs() {
-  return static_cast<IOFS *>(fuse_get_context()->private_data);
-}
-
-struct fuse_operations iofs_oper = {
-  .getattr    = [](auto ...args) { return get_fs()->getattr(args...); },
-  .readlink   = [](auto ...args) { return get_fs()->readlink(args...); },
-  // .mknod   = nullptr,
-  .mkdir      = [](auto ...args) { return get_fs()->mkdir(args...); },
-  .unlink     = [](auto ...args) { return get_fs()->unlink(args...); },
-  .rmdir      = [](auto ...args) { return get_fs()->rmdir(args...); },
-  .symlink    = [](auto ...args) { return get_fs()->symlink(args...); },
-  .rename     = [](auto ...args) { return get_fs()->rename(args...); },
-  .link       = [](auto ...args) { return get_fs()->link(args...); },
-  .chmod      = [](auto ...args) { return get_fs()->chmod(args...); },
-  .chown      = [](auto ...args) { return get_fs()->chown(args...); },
-  .truncate   = [](auto ...args) { return get_fs()->truncate(args...); },
-  .open       = [](auto ...args) { return get_fs()->open(args...); },
-  .read       = [](auto ...args) { return get_fs()->read(args...); },
-  .write      = [](auto ...args) { return get_fs()->write(args...); },
-  .statfs     = [](auto ...args) { return get_fs()->statfs(args...); },
-  .flush      = [](auto ...args) { return get_fs()->flush(args...); },
-  .release    = [](auto ...args) { return get_fs()->release(args...); },
-  .fsync      = [](auto ...args) { return get_fs()->fsync(args...); },
-  .setxattr   = [](auto ...args) { return get_fs()->setxattr(args...); },
-  .getxattr   = [](auto ...args) { return get_fs()->getxattr(args...); },
-  .listxattr  = [](auto ...args) { return get_fs()->listxattr(args...); },
-  .removexattr= [](auto ...args) { return get_fs()->removexattr(args...); },
-  .opendir    = [](auto ...args) { return get_fs()->opendir(args...); },
-  .readdir    = [](auto ...args) { return get_fs()->readdir(args...); },
-  .releasedir = [](auto ...args) { return get_fs()->releasedir(args...); },
-  // .fsyncdir = nullptr,
-  .init       = [](auto ...args) { return get_fs()->init(args...); },
-  .destroy    = [](auto ...args) { get_fs()->destroy(args...); },
-  .access     = [](auto ...args) { return get_fs()->access(args...); },
-  .create     = [](auto ...args) { return get_fs()->create(args...); },
-  // .lock    = nullptr, /* POSIX lock, distinct from flock */
-  .utimens    = [](auto ...args) { return get_fs()->utimens(args...); },
-  // .bmap    = nullptr,
-  // .ioctl   = nullptr,
-  // .poll    = nullptr,
-#ifdef USE_ZERO_COPY
-  .write_buf  = [](auto ...args) { return get_fs()->write_buf(args...); },
-  .read_buf   = [](auto ...args) { return get_fs()->read_buf(args...); },
-#endif
-  .flock      = [](auto ...args) { return get_fs()->flock(args...); },
-  .fallocate  = [](auto ...args) { return get_fs()->fallocate(args...); },
-};
 
 int IOFS::getattr(const char *path, struct stat *stbuf, [[maybe_unused]] fuse_file_info *fi) {
   TimerGuard timer{IOOp::getattr};
