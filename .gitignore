@@ -59,4 +59,4 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
-iofs
+iofs-ng

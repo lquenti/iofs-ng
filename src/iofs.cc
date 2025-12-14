@@ -1,724 +1,541 @@
-// Use if you want to enable zero copy through splicing
-#define USE_ZERO_COPY
-
-#include <iostream>
-#include <vector>
-
-#define FUSE_USE_VERSION 36
-#define HAVE_UTIMENSAT
-
-#define debug(...)
-
-#include <fuse.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <fcntl.h>
-#include <sys/stat.h>
-#include <dirent.h>
-#include <errno.h>
-#include <sys/time.h>
-#include <sys/xattr.h>
-#include <sys/file.h> /* flock(2) */
-
+#include <sys/statvfs.h>
+#define FUSE_USE_VERSION 36
+#include <filesystem>
+#include <fuse.h>
 #include <unistd.h>
-#include <limits.h>
 
-//parsing of cli
-#include "cli.hh"
+#include <sys/stat.h>
+#include <sys/xattr.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <sys/file.h>
+#include <print>
 
-#define START_TIMER(...)
-#define END_TIMER(...)
+enum class IOOp {
+  getattr, readlink, mkdir, unlink, rmdir, symlink, rename, link, chmod, chown, truncate, open, read, write,
+  statfs, flush, release, fsync, setxattr, getxattr, listxattr, removexattr, opendir, readdir, releasedir,
+  access, create, utimens, write_buf, read_buf, flock, fallocate
+};
 
-// TODO refactor
-static const char * prefix;
-typedef char name_buffer[PATH_MAX];
+class TimerGuard {
+  public:
+    using clock_type = std::chrono::high_resolution_clock;
+    explicit TimerGuard(IOOp op, size_t init_s=1) : m_operation{op}, m_size{init_s}, m_start{clock_type::now()} {}
+    ~TimerGuard();
+    void update_size(size_t s);
+  private:
+    IOOp m_operation;
+    size_t m_size;
+    clock_type::time_point m_start;
+};
 
-static void prepare_path(const char * path, char * out){
-  //	debug("%s\n", __PRETTY_FUNCTION__);
-  snprintf(out, PATH_MAX, "%s/%s", prefix, path);
+TimerGuard::~TimerGuard() {
+  auto end{clock_type::now()};
+  auto dur{std::chrono::duration_cast<std::chrono::nanoseconds>(end-m_start)};
+  // TODO record metric here (only if it wasnt done 0 times)
 }
 
-static int cache_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
-{
-  START_TIMER();
-  //	debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  name_buffer name_buf;
-  prepare_path(path, name_buf);
-  res = lstat(name_buf, stbuf);
-  END_TIMER(GETATTR, 1);
-  if (res == -1){
+void TimerGuard::update_size(size_t s) {
+  m_size=s;
+}
+
+
+// See `fuse_operations` struct definition for description on the operations
+class IOFS {
+  public:
+    explicit IOFS(std::filesystem::path root) : m_source_root{std::move(root)} {}
+    int getattr(const char *path, struct stat *stbuf, fuse_file_info *fi);
+    int readlink(const char *path, char *buf, size_t size);
+    int mkdir(const char *path, mode_t mode);
+    int unlink(const char *path);
+    int rmdir(const char *path);
+    int symlink(const char *from, const char *to);
+    int rename(const char *from, const char *to, unsigned int flags);
+    int link(const char *from, const char *to);
+    int chmod(const char *path, mode_t mode, fuse_file_info *fi);
+    int chown(const char *path, uid_t uid, gid_t gid, fuse_file_info *fi);
+    int truncate(const char *path, off_t size, fuse_file_info *fi);
+    int open(const char *path, fuse_file_info *fi);
+    int read(const char *path, char *buf, size_t size, off_t offset, fuse_file_info *fi);
+    int write(const char *path, const char *buf, size_t size, off_t offset, fuse_file_info *fi);
+    int statfs(const char *path, struct statvfs *stbuf);
+    int flush(const char *path, fuse_file_info *fi);
+    int release(const char *path, fuse_file_info *fi);
+    int fsync(const char *path, int isdatasync, fuse_file_info *fi);
+    int setxattr(const char *path, const char *name, const char *value, size_t size, int flags);
+    int getxattr(const char *path, const char *name, char *value, size_t size);
+    int listxattr(const char *path, char *list, size_t size);
+    int removexattr(const char *path, const char *name);
+    int opendir(const char *path, fuse_file_info *fi);
+    int readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, fuse_file_info *fi,
+        fuse_readdir_flags flags);
+    int releasedir(const char *path, fuse_file_info *fi);
+    void *init(fuse_conn_info *conn, fuse_config *cfg);
+    void destroy(void *private_data);
+    int access(const char *path, int mask);
+    int create(const char *path, mode_t mode, fuse_file_info *fi);
+    int utimens(const char *path, const timespec ts[2], fuse_file_info *fi);
+    int write_buf(const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi);
+    int read_buf(const char *path, fuse_bufvec **bufp, size_t size, off_t offset, fuse_file_info *fi);
+    int flock(const char *path, fuse_file_info *fi, int op);
+    int fallocate(const char *path, int mode, off_t offset, off_t length, fuse_file_info *fi);
+  private:
+    std::filesystem::path m_source_root;
+    std::filesystem::path resolve_path(const char *path) const;
+};
+
+static IOFS *get_fs() {
+  return static_cast<IOFS *>(fuse_get_context()->private_data);
+}
+
+struct fuse_operations iofs_oper = {
+  .getattr    = [](auto ...args) { return get_fs()->getattr(args...); },
+  .readlink   = [](auto ...args) { return get_fs()->readlink(args...); },
+  // .mknod   = nullptr,
+  .mkdir      = [](auto ...args) { return get_fs()->mkdir(args...); },
+  .unlink     = [](auto ...args) { return get_fs()->unlink(args...); },
+  .rmdir      = [](auto ...args) { return get_fs()->rmdir(args...); },
+  .symlink    = [](auto ...args) { return get_fs()->symlink(args...); },
+  .rename     = [](auto ...args) { return get_fs()->rename(args...); },
+  .link       = [](auto ...args) { return get_fs()->link(args...); },
+  .chmod      = [](auto ...args) { return get_fs()->chmod(args...); },
+  .chown      = [](auto ...args) { return get_fs()->chown(args...); },
+  .truncate   = [](auto ...args) { return get_fs()->truncate(args...); },
+  .open       = [](auto ...args) { return get_fs()->open(args...); },
+  .read       = [](auto ...args) { return get_fs()->read(args...); },
+  .write      = [](auto ...args) { return get_fs()->write(args...); },
+  .statfs     = [](auto ...args) { return get_fs()->statfs(args...); },
+  .flush      = [](auto ...args) { return get_fs()->flush(args...); },
+  .release    = [](auto ...args) { return get_fs()->release(args...); },
+  .fsync      = [](auto ...args) { return get_fs()->fsync(args...); },
+  .setxattr   = [](auto ...args) { return get_fs()->setxattr(args...); },
+  .getxattr   = [](auto ...args) { return get_fs()->getxattr(args...); },
+  .listxattr  = [](auto ...args) { return get_fs()->listxattr(args...); },
+  .removexattr= [](auto ...args) { return get_fs()->removexattr(args...); },
+  .opendir    = [](auto ...args) { return get_fs()->opendir(args...); },
+  .readdir    = [](auto ...args) { return get_fs()->readdir(args...); },
+  .releasedir = [](auto ...args) { return get_fs()->releasedir(args...); },
+  // .fsyncdir = nullptr,
+  .init       = [](auto ...args) { return get_fs()->init(args...); },
+  .destroy    = [](auto ...args) { get_fs()->destroy(args...); },
+  .access     = [](auto ...args) { return get_fs()->access(args...); },
+  .create     = [](auto ...args) { return get_fs()->create(args...); },
+  // .lock    = nullptr, /* POSIX lock, distinct from flock */
+  .utimens    = [](auto ...args) { return get_fs()->utimens(args...); },
+  // .bmap    = nullptr,
+  // .ioctl   = nullptr,
+  // .poll    = nullptr,
+  .write_buf  = [](auto ...args) { return get_fs()->write_buf(args...); },
+  .read_buf   = [](auto ...args) { return get_fs()->read_buf(args...); },
+  .flock      = [](auto ...args) { return get_fs()->flock(args...); },
+  .fallocate  = [](auto ...args) { return get_fs()->fallocate(args...); },
+};
+
+int IOFS::getattr(const char *path, struct stat *stbuf, [[maybe_unused]] fuse_file_info *fi) {
+  TimerGuard timer{IOOp::getattr};
+  auto full_path{resolve_path(path)};
+  int res{lstat(full_path.c_str(), stbuf)};
+  return (res == -1) ? -errno : 0;
+}
+
+int IOFS::readlink(const char *path, char *buf, size_t size) {
+  TimerGuard timer{IOOp::readlink};
+  auto full_path{resolve_path(path)};
+  ssize_t res{::readlink(full_path.c_str(), buf, size-1)};
+  if (res==-1) {
     return -errno;
   }
-  return 0;
-}
-
-static int cache_access(const char *path, int mask)
-{
-  START_TIMER();
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  name_buffer name_buf;
-  prepare_path(path, name_buf);
-
-  res = access(name_buf, mask);
-  END_TIMER(ACCESS, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-static int cache_readlink(const char *path, char *buf, size_t size)
-{
-  START_TIMER();
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  name_buffer name_buf;
-  prepare_path(path, name_buf);
-
-  res = readlink(name_buf, buf, size - 1);
-  END_TIMER(READLINK, 1);
-  if (res == -1)
-    return -errno;
-
   buf[res] = '\0';
   return 0;
 }
 
-struct cache_dirp {
-  DIR *dp;
-  struct dirent *entry;
-  off_t offset;
-};
+int IOFS::mkdir(const char *path, mode_t mode) {
+  TimerGuard timer{IOOp::mkdir};
+  auto full_path{resolve_path(path)};
+  int res{::mkdir(full_path.c_str(), mode)};
+  return (res == -1) ? -errno : 0;
+}
 
-static int cache_opendir(const char *path, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  START_TIMER();
-  name_buffer name_buf;
-  prepare_path(path, name_buf);
+int IOFS::unlink(const char *path) {
+  TimerGuard timer{IOOp::unlink};
+  auto full_path{resolve_path(path)};
+  int res{::unlink(full_path.c_str())};
+  return (res == -1) ? -errno : 0;
+}
 
-  int res;
-  struct cache_dirp *d = (struct cache_dirp *)(malloc(sizeof(struct cache_dirp)));
-  if (d == NULL)
-    return -ENOMEM;
+int IOFS::rmdir(const char *path) {
+  TimerGuard timer{IOOp::rmdir};
+  auto full_path{resolve_path(path)};
+  int res{::rmdir(full_path.c_str())};
+  return (res == -1) ? -errno : 0;
+}
 
-  d->dp = opendir(name_buf);
-  END_TIMER(OPENDIR, 1);
-  if (d->dp == NULL) {
-    res = -errno;
-    free(d);
-    return res;
+int IOFS::symlink(const char *from, const char *to) {
+  TimerGuard timer{IOOp::symlink};
+  auto full_path1{resolve_path(from)}, full_path2{resolve_path(to)};
+  int res{::symlink(full_path1.c_str(), full_path2.c_str())};
+  return (res==-1) ? -errno : 0;
+}
+
+int IOFS::rename(const char *from, const char *to, unsigned int flags) {
+  TimerGuard timer{IOOp::rename};
+  auto full_path1{resolve_path(from)}, full_path2{resolve_path(to)};
+  // AT_FDCWD works since the paths are absolute
+  int res{::renameat2(AT_FDCWD, full_path1.c_str(), AT_FDCWD, full_path2.c_str(), flags)};
+  return (res==-1) ? -errno : 0;
+}
+
+int IOFS::link(const char *from, const char *to) {
+  TimerGuard timer{IOOp::link};
+  auto full_path1{resolve_path(from)}, full_path2{resolve_path(to)};
+  int res{::link(full_path1.c_str(), full_path2.c_str())};
+  return (res==-1) ? -errno : 0;
+}
+
+int IOFS::chmod(const char *path, mode_t mode, [[maybe_unused]] fuse_file_info *fi) {
+  TimerGuard timer{IOOp::chmod};
+  auto full_path{resolve_path(path)};
+  int res{::chmod(full_path.c_str(), mode)};
+  return (res == -1) ? -errno : 0;
+}
+
+int IOFS::chown(const char *path, uid_t uid, gid_t gid, [[maybe_unused]] fuse_file_info *fi) {
+  TimerGuard timer{IOOp::chown};
+  auto full_path{resolve_path(path)};
+  int res{::lchown(full_path.c_str(), uid, gid)};
+  return (res==-1) ? -errno : 0;
+}
+
+int IOFS::truncate(const char *path, off_t size, [[maybe_unused]] fuse_file_info *fi) {
+  TimerGuard timer{IOOp::truncate};
+  auto full_path{resolve_path(path)};
+  int res{::truncate(full_path.c_str(), size)};
+  return (res==-1) ? -errno : 0;
+}
+
+int IOFS::open(const char *path, fuse_file_info *fi) {
+  TimerGuard timer{IOOp::open};
+  auto full_path{resolve_path(path)};
+  int fd{::open(full_path.c_str(), fi->flags)};
+  if (fd == -1) {
+    return -errno;
   }
-  d->offset = 0;
-  d->entry = NULL;
-
-  fi->fh = (unsigned long) d;
-  return 0;
-}
-
-static inline struct cache_dirp *get_dirp(struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  return (struct cache_dirp *) (uintptr_t) fi->fh;
-}
-
-static int cache_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-    off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  START_TIMER();
-  struct cache_dirp *d = get_dirp(fi);
-
-  (void) path;
-  if (offset != d->offset) {
-    seekdir(d->dp, offset);
-    d->entry = NULL;
-    d->offset = offset;
-  }
-  while (1) {
-    struct stat st;
-    off_t nextoff;
-    enum fuse_fill_dir_flags fill_flags = FUSE_FILL_DIR_DEFAULTS;
-
-    if (!d->entry) {
-      d->entry = readdir(d->dp);
-      if (!d->entry)
-        break;
-    }
-    if (flags & FUSE_READDIR_PLUS) {
-      int res;
-
-      res = fstatat(dirfd(d->dp), d->entry->d_name, &st, AT_SYMLINK_NOFOLLOW);
-      if (res != -1)
-        fill_flags = static_cast<fuse_fill_dir_flags>(fill_flags | FUSE_FILL_DIR_PLUS);
-
-    }
-    if (!(fill_flags & FUSE_FILL_DIR_PLUS)) {
-      memset(&st, 0, sizeof(st));
-      st.st_ino = d->entry->d_ino;
-      st.st_mode = d->entry->d_type << 12;
-    }
-    nextoff = telldir(d->dp);
-    if (filler(buf, d->entry->d_name, &st, nextoff, fill_flags))
-      break;
-
-    d->entry = NULL;
-    d->offset = nextoff;
-  }
-
-  END_TIMER(READDIR, 1);
-  return 0;
-}
-
-static int cache_releasedir(const char *path, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  START_TIMER();
-  struct cache_dirp *d = get_dirp(fi);
-  (void) path;
-  closedir(d->dp);
-  free(d);
-  END_TIMER(RELEASEDIR, 1);
-  return 0;
-}
-
-static int cache_mkdir(const char *path, mode_t mode)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  START_TIMER();
-  int res;
-  name_buffer name_buf;
-  prepare_path(path, name_buf);
-
-  res = mkdir(name_buf, mode);
-  END_TIMER(MKDIR, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-static int cache_unlink(const char *path)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  res = unlink(name_buf);
-  END_TIMER(UNLINK, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-static int cache_rmdir(const char *path)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  res = rmdir(name_buf);
-  END_TIMER(RMDIR, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-static int cache_symlink(const char *from, const char *to)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  START_TIMER();
-  name_buffer name_buf1;
-  prepare_path(from, name_buf1);
-  name_buffer name_buf2;
-  prepare_path(to, name_buf2);
-
-  res = symlink(name_buf1, name_buf2);
-  END_TIMER(SYMLINK, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-static int cache_rename(const char *from, const char *to, unsigned int flags)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  START_TIMER();
-  name_buffer name_buf1;
-  prepare_path(from, name_buf1);
-  name_buffer name_buf2;
-  prepare_path(to, name_buf2);
-
-  /* When we have renameat2() in libc, then we can implement flags */
-  if (flags)
-    return -EINVAL;
-
-  res = rename(name_buf1, name_buf2);
-  END_TIMER(RENAME, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-static int cache_link(const char *from, const char *to)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  START_TIMER();
-  name_buffer name_buf1;
-  prepare_path(from, name_buf1);
-  name_buffer name_buf2;
-  prepare_path(to, name_buf2);
-
-  res = link(name_buf1, name_buf2);
-  END_TIMER(LINK, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-static int cache_chmod(const char *path, mode_t mode, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  res = chmod(name_buf, mode);
-  END_TIMER(CHMOD, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-static int cache_chown(const char *path, uid_t uid, gid_t gid, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  res = lchown(name_buf, uid, gid);
-  END_TIMER(CHOWN, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-static int cache_truncate(const char *path, off_t size, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  res = truncate(name_buf, size);
-  END_TIMER(TRUNCATE, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-
-static int cache_utimens(const char *path, const struct timespec ts[2], struct fuse_file_info *fi){
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  /* don't use utime/utimes since they follow symlinks */
-  res = utimensat(0, name_buf, ts, AT_SYMLINK_NOFOLLOW);
-  END_TIMER(UTIMENS, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-static int cache_create(const char *path, mode_t mode, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int fd;
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  fd = open(name_buf, fi->flags, mode);
-  END_TIMER(CREATE, 1);
-  if (fd == -1)
-    return -errno;
-
   fi->fh = fd;
   return 0;
 }
 
-static int cache_open(const char *path, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int fd;
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  fd = open(name_buf, fi->flags);
-  END_TIMER(OPEN, 1);
-  if (fd == -1)
+int IOFS::read([[maybe_unused]] const char *path, char *buf, size_t size, off_t offset, fuse_file_info *fi) {
+  TimerGuard timer{IOOp::read, 0};
+  ssize_t res{::pread(fi->fh, buf, size, offset)};
+  if (res == -1) {
     return -errno;
-
-  fi->fh = fd;
-  return 0;
+  }
+  timer.update_size(static_cast<size_t>(res));
+  return static_cast<int>(res);
 }
 
-static int cache_read(const char *path, char *buf, size_t size, off_t offset,
-    struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  START_TIMER();
-  int res;
-
-  res = pread(fi->fh, buf, size, offset);
-  END_TIMER(READ, res);
-
-  if (res == -1)
-    res = -errno;
-
-  return res;
-}
-
-static int cache_read_buf(const char *path, struct fuse_bufvec **bufp, size_t size, off_t offset, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  START_TIMER();
-  struct fuse_bufvec *src;
-
-  (void) path;
-
-  src = (struct fuse_bufvec *)(malloc(sizeof(struct fuse_bufvec)));
-  if (src == NULL)
-    return -ENOMEM;
-
-  *src = FUSE_BUFVEC_INIT(size);
-
-  src->buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
-  src->buf[0].fd = fi->fh;
-  src->buf[0].pos = offset;
-
-  *bufp = src;
-  END_TIMER(READ_BUF, size);
-
-  return 0;
-}
-
-static int cache_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  START_TIMER();
-  int res;
-
-  res = pwrite(fi->fh, buf, size, offset);
-  END_TIMER(WRITE, res);
-
-  if (res == -1)
-    res = -errno;
-
-  return res;
-}
-
-static int cache_write_buf(const char *path, struct fuse_bufvec *buf, off_t offset, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  START_TIMER();
-  size_t size = fuse_buf_size(buf);
-  struct fuse_bufvec dst = FUSE_BUFVEC_INIT(size);
-
-  (void) path;
-
-  dst.buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
-  dst.buf[0].fd = fi->fh;
-  dst.buf[0].pos = offset;
-
-  int ret = fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK);
-  END_TIMER(WRITE_BUF, size);
-
-  return ret;
-}
-
-static int cache_statfs(const char *path, struct statvfs *stbuf)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-
-  START_TIMER();
-  res = statvfs(path, stbuf);
-  END_TIMER(STATFS, 1);
-  if (res == -1)
+int IOFS::write([[maybe_unused]] const char *path, const char *buf, size_t size, off_t offset, fuse_file_info *fi) {
+  TimerGuard timer{IOOp::write, 0};
+  ssize_t res{::pwrite(fi->fh, buf, size, offset)};
+  if (res == -1) {
     return -errno;
-
-  return 0;
+  }
+  timer.update_size(static_cast<size_t>(res));
+  return static_cast<int>(res);
 }
 
-static int cache_flush(const char *path, struct fuse_file_info *fi)
-{
-  int res;
+int IOFS::statfs(const char *path, struct statvfs *stbuf) {
+  TimerGuard timer{IOOp::statfs};
+  auto full_path{resolve_path(path)};
+  int res{::statvfs(path, stbuf)};
+  return (res == -1) ? -errno : 0;
+}
 
-  (void) path;
+int IOFS::flush([[maybe_unused]] const char *path, fuse_file_info *fi) {
+  TimerGuard timer{IOOp::flush};
   /* This is called from every close on an open file, so call the
      close on the underlying filesystem.	But since flush may be
      called multiple times for an open file, this must not really
      close the file.  This is important if used on a network
      filesystem like NFS which flush the data/metadata on close() */
-  START_TIMER();
-  res = close(dup(fi->fh));
-  END_TIMER(FLUSH, 1);
-  if (res == -1)
-    return -errno;
+  int res{::close(::dup(fi->fh))};
+  return (res == -1) ? -errno : 0;
+}
 
+int IOFS::release([[maybe_unused]] const char *path, fuse_file_info *fi) {
+  TimerGuard timer{IOOp::release};
+  ::close(fi->fh);
   return 0;
 }
 
-static int cache_release(const char *path, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  (void) path;
-  START_TIMER();
-  close(fi->fh);
-  END_TIMER(RELEASE, 1);
-  return 0;
-}
-
-static int cache_fsync(const char *path, int isdatasync, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
+int IOFS::fsync([[maybe_unused]] const char *path, int isdatasync, fuse_file_info *fi) {
+  TimerGuard timer{IOOp::fsync};
   int res;
-  (void) path;
-  START_TIMER();
-#ifndef HAVE_FDATASYNC
-  (void) isdatasync;
-#else
-  if (isdatasync)
-    res = fdatasync(fi->fh);
-  else
-#endif
-    res = fsync(fi->fh);
-  END_TIMER(FSYNC, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
+  if (isdatasync) {
+    res = ::fdatasync(fi->fh);
+  } else {
+    res = ::fsync(fi->fh);
+  }
+  return (res == -1) ? -errno : 0;
 }
 
-static int cache_fallocate(const char *path, int mode,
-    off_t offset, off_t length, struct fuse_file_info *fi)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  (void) path;
-
-  if (mode)
-    return -EOPNOTSUPP;
-
-  START_TIMER();
-  int ret = -posix_fallocate(fi->fh, offset, length);
-  END_TIMER(FALLOCATE, 1);
-  return ret;
+int IOFS::setxattr(const char *path, const char *name, const char *value, size_t size, int flags) {
+  TimerGuard timer{IOOp::setxattr};
+  auto full_path{resolve_path(path)};
+  int res{::lsetxattr(full_path.c_str(), name, value, size, flags)};
+  return (res == -1) ? -errno : 0;
 }
 
-/* xattr operations are optional and can safely be left unimplemented */
-static int cache_setxattr(const char *path, const char *name, const char *value,
-    size_t size, int flags)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  int res = lsetxattr(name_buf, name, value, size, flags);
-  END_TIMER(SETXATTR, 1);
-  if (res == -1)
-    return -errno;
-  return 0;
+int IOFS::getxattr(const char *path, const char *name, char *value, size_t size) {
+  TimerGuard timer{IOOp::getxattr};
+  auto full_path{resolve_path(path)};
+  ssize_t res{::lgetxattr(full_path.c_str(), name, value, size)};
+  return (res == -1) ? -errno : static_cast<int>(res);
 }
 
-static int cache_getxattr(const char *path, const char *name, char *value,
-    size_t size)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  int res = lgetxattr(name_buf, name, value, size);
-  END_TIMER(GETXATTR, 1);
-  if (res == -1)
-    return -errno;
-  return res;
+int IOFS::listxattr(const char *path, char *list, size_t size) {
+  TimerGuard timer{IOOp::listxattr};
+  auto full_path{resolve_path(path)};
+  ssize_t res{::listxattr(full_path.c_str(), list, size)};
+  return (res == -1) ? -errno : static_cast<int>(res);
 }
 
-static int cache_listxattr(const char *path, char *list, size_t size)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  int res = llistxattr(name_buf, list, size);
-  END_TIMER(LISTXATTR, 1);
-  if (res == -1)
-    return -errno;
-  return res;
+int IOFS::removexattr(const char *path, const char *name) {
+  TimerGuard timer{IOOp::removexattr};
+  auto full_path{resolve_path(path)};
+  int res{::lremovexattr(full_path.c_str(), name)};
+  return (res == -1) ? -errno : 0;
 }
 
-static int cache_removexattr(const char *path, const char *name)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  name_buffer name_buf;
-  START_TIMER();
-  prepare_path(path, name_buf);
-
-  int res = lremovexattr(name_buf, name);
-  END_TIMER(REMOVEXATTR, 1);
-  if (res == -1)
-    return -errno;
-  return 0;
-}
-
-static int cache_flock(const char *path, struct fuse_file_info *fi, int op)
-{
-  debug("%s\n", __PRETTY_FUNCTION__);
-  int res;
-  START_TIMER();
-  res = flock(fi->fh, op);
-  END_TIMER(FLOCK, 1);
-  if (res == -1)
-    return -errno;
-
-  return 0;
-}
-
-static void *cache_init (struct fuse_conn_info *conn, struct fuse_config *cfg){
-
-  // see documentation of options in fuse.h
-  //cfg->direct_io = 1;
-  //cfg->kernel_cache = 1;
-  cfg->auto_cache = 0;
-
-  printf("IOFS init\n");
-  printf("intr: %d\n", cfg->intr);
-  printf("remember: %d\n", cfg->remember);
-  printf("intr: %d\n", cfg->intr);
-  printf("hard_remove: %d\n", cfg->hard_remove);
-  printf("use_ino: %d\n", cfg->use_ino);
-  printf("readdir_ino: %d\n", cfg->readdir_ino);
-  printf("direct_io: %d\n", cfg->direct_io);
-  printf("kernel_cache: %d\n", cfg->kernel_cache);
-  printf("auto_cache: %d\n", cfg->auto_cache);
-  printf("ac_attr_timeout_set: %d\n", cfg->ac_attr_timeout_set);
-  printf("nullpath_ok: %d\n", cfg->nullpath_ok);
-
-  printf("ac_attr_timeout: %f\n", cfg->ac_attr_timeout);
-  printf("entry_timeout: %f\n", cfg->entry_timeout);
-  printf("negative_timeout: %f\n", cfg->negative_timeout);
-  printf("attr_timeout: %f\n", cfg->attr_timeout);
-
-  return NULL;
-}
-
-static void cache_destroy(void *private_data){
-  (void)private_data;
-}
-
-static struct fuse_operations cache_oper = {
-  .getattr	= cache_getattr,
-  .readlink	= cache_readlink,
-  .mkdir		= cache_mkdir,
-  .unlink		= cache_unlink,
-  .rmdir		= cache_rmdir,
-  .symlink	= cache_symlink,
-  .rename		= cache_rename,
-  .link		= cache_link,
-  .chmod		= cache_chmod,
-  .chown		= cache_chown,
-  .truncate	= cache_truncate,
-  .open		= cache_open,
-  .read		= cache_read,
-  .write		= cache_write,
-  .statfs		= cache_statfs,
-  .flush		= cache_flush,
-  .release	= cache_release,
-  .fsync		= cache_fsync,
-  .setxattr	= cache_setxattr,
-  .getxattr	= cache_getxattr,
-  .listxattr	= cache_listxattr,
-  .removexattr	= cache_removexattr,
-  .opendir	= cache_opendir,
-  .readdir	= cache_readdir,
-  .releasedir	= cache_releasedir,
-  .init     = cache_init,
-  .destroy  = cache_destroy,
-  .access		= cache_access,
-  .create		= cache_create,
-  .utimens	= cache_utimens,
-#ifdef USE_ZERO_COPY
-  .write_buf	= cache_write_buf,
-  .read_buf	= cache_read_buf,
-#endif
-  .flock		= cache_flock,
-  .fallocate	= cache_fallocate
+struct DirHandle {
+    DIR *dp{nullptr};
+    struct dirent *entry{nullptr};
+    off_t offset{0};
+    ~DirHandle() {
+        if (dp) {
+          closedir(dp);
+        }
+    }
 };
 
+static DirHandle *get_dir_handle(fuse_file_info *fi) {
+    return reinterpret_cast<DirHandle*>(fi->fh);
+}
 
+int IOFS::opendir(const char *path, fuse_file_info *fi) {
+  std::unique_ptr<DirHandle> d{std::make_unique<DirHandle>()};
+  {
+    TimerGuard timer{IOOp::opendir};
+    auto full_path{resolve_path(path)};
+    d->dp = ::opendir(full_path.c_str());
+  } // Make the timer guard commit early
+  if (!d->dp) {
+    return -errno;
+  }
+  // Give ownership to FUSE (taking it back at releasedir)
+  fi->fh = reinterpret_cast<uint64_t>(d.release());
+  return 0;
+}
 
-int main(int argc, char **argv) {
-  CliArgs arguments;
-  arguments = parse_args(argc, argv);
+int IOFS::readdir([[maybe_unused]] const char *path, void *buf, fuse_fill_dir_t filler, off_t offset,
+    fuse_file_info *fi, fuse_readdir_flags flags) {
+  TimerGuard timer{IOOp::readdir};
 
-  //add hostname to tags
-  char hostname[HOST_NAME_MAX + 1 + 5];
-  gethostname(hostname, HOST_NAME_MAX + 1);
+  // stored in opendir
+  DirHandle *d{get_dir_handle(fi)};
 
-  prefix = arguments.source_dir.c_str();
-  umask(0);
-
-  std::string mountpoint_str = arguments.mountpoint.string();
-  // TODO put into cli.cc
-  char arg_fg[] = "-f";
-  char arg_dbg[] = "-d";
-  char arg_opt_kern[] = "-o";
-  char arg_opt_allow[] = "allow_other";
-
-  std::vector<char*> fuse_args;
-  fuse_args.push_back(argv[0]);                  // Program name
-  fuse_args.push_back(mountpoint_str.data());    // Mountpoint
-  fuse_args.push_back(arg_fg);                   // Foreground
-  fuse_args.push_back(arg_dbg);                  // Debug/Verbose
-
-  if (arguments.use_allow_other) {
-      fuse_args.push_back(arg_opt_kern);
-      fuse_args.push_back(arg_opt_allow);
+  // Seek if fuse asks an offset where we didnt stop before
+  // Note: Since std::filesystem doesnt offer a RandomIterator, it makes sense to stick with the C API here, even
+  // though we aim to "modernize" it...
+  if (offset != d->offset) {
+    ::seekdir(d->dp, offset);
+    d->entry = nullptr;
+    d->offset = offset;
   }
 
-  int ret = fuse_main(static_cast<int>(fuse_args.size()), fuse_args.data(), &cache_oper, NULL);
-  return ret;
+  while (true) {
+    // Read nexxt entry
+    if (!d->entry) {
+      d->entry = ::readdir(d->dp);
+      // stop if end of directory
+      if (!d->entry) {
+        break;
+      }
+    }
+
+    // Check if we are in Plus Mode. `enum fuse_readdir_flags` describes it as follows:
+    //
+	  // "Plus" mode.
+    //
+	  // The kernel wants to prefill the inode cache during readdir.  The
+	  // filesystem may honour this by filling in the attributes and setting
+	  // FUSE_FILL_DIR_FLAGS for the filler function.  The filesystem may also
+	  // just ignore this flag completely.
+    //
+    // As I understand it, the idea is that Plus mode already pre-fetches the metadata, so that it doesnt need a
+    // full getattr/stat call later...
+    //
+    // Furthermore, I think we could just set it everytime, as `enum fuse_fill_dir_flags` says that
+    //
+	  // It is okay to set FUSE_FILL_DIR_PLUS if FUSE_READDIR_PLUS is not set
+	  // and vice versa.
+    //
+    // But, in line with Chesterton's Fence, we won't touch it until I got a feel for readdir and we have proper
+    // stress/fuzz/correctness testing
+    struct stat st{}; /* zero-init through value init */
+    enum fuse_fill_dir_flags fill_flags{FUSE_FILL_DIR_DEFAULTS};
+    if (flags & FUSE_READDIR_PLUS) {
+      int res{::fstatat(dirfd(d->dp), d->entry->d_name, &st, AT_SYMLINK_NOFOLLOW)};
+      if (res != -1) {
+        // Telling the fs that we successfully filled it!!!
+        fill_flags = static_cast<fuse_fill_dir_flags>(fill_flags | FUSE_FILL_DIR_PLUS);
+      }
+    }
+
+    // If no Plus mode, or fstatat failed, we fill it with minimal mock info
+    if (!(fill_flags & FUSE_FILL_DIR_PLUS)) {
+      st.st_ino = d->entry->d_ino;
+      st.st_mode = d->entry->d_type << 12; // ??
+    }
+
+    // get offset of *next* entry (as we processed the last one from a POSIX perspective)
+    off_t nextoff = ::telldir(d->dp);
+
+    // To quote `fuse_operations::readdir`
+	  // The filesystem may choose between two modes of operation:
+    // ...
+	  // 2) The readdir implementation keeps track of the offsets of the
+	  // directory entries.  It uses the offset parameter and always
+	  // passes non-zero offset to the filler function.  When the buffer
+	  // is full (or an error happens) the filler function will return
+	  // '1'.
+    if (filler(buf, d->entry->d_name, &st, nextoff, fill_flags)) {
+      break;
+    }
+
+    // prepare for next entry
+    d->entry = nullptr;
+    d->offset = nextoff;
+  }
+  return 0;
+}
+
+int IOFS::releasedir(const char *path, fuse_file_info *fi) {
+  TimerGuard timer{IOOp::releasedir};
+  // re-take ownership (released in opendir) to get RAII cleanup
+  std::unique_ptr<DirHandle> d{reinterpret_cast<DirHandle *>(fi->fh)};
+  return 0;
+}
+
+void *IOFS::init (fuse_conn_info *conn, fuse_config *cfg) {
+  // The initing of the IOFS object (i.e. the construction) already happens in main
+  // (passed to FUSE via `user_data` parameter of `fuse_main`)
+  // I think its cleaner to handle IOFS creation problems *before* already being in FUSE space with background logs...
+
+  // see documentation of options in fuse.h
+  // cfg->direct_io = 1;
+  // cfg->kernel_cache = 1;
+  cfg->auto_cache = 0;
+
+  std::println("IOFS init");
+  std::println("intr: {}", cfg->intr);
+  std::println("remember: {}", cfg->remember);
+  std::println("hard_remove: {}", cfg->hard_remove);
+  std::println("use_ino: {}", cfg->use_ino);
+  std::println("readdir_ino: {}", cfg->readdir_ino);
+  std::println("direct_io: {}", cfg->direct_io);
+  std::println("kernel_cache: {}", cfg->kernel_cache);
+  std::println("auto_cache: {}", cfg->auto_cache);
+  std::println("ac_attr_timeout_set: {}", cfg->ac_attr_timeout_set);
+  std::println("nullpath_ok: {}", cfg->nullpath_ok);
+
+  std::println("ac_attr_timeout: {}", cfg->ac_attr_timeout);
+  std::println("entry_timeout: {}", cfg->entry_timeout);
+  std::println("negative_timeout: {}", cfg->negative_timeout);
+  std::println("attr_timeout: {}", cfg->attr_timeout);
+
+  return this;
+}
+
+void IOFS::destroy([[maybe_unused]] void *private_data) {
+  // ~IOFS is called at end of `main`...
+}
+
+int IOFS::access(const char *path, int mask) {
+  TimerGuard timer{IOOp::access};
+  auto full_path{resolve_path(path)};
+  int res{::access(full_path.c_str(), mask)};
+  return (res == -1) ? -errno : 0;
+}
+
+int IOFS::create(const char *path, mode_t mode, fuse_file_info *fi) {
+  TimerGuard timer{IOOp::create};
+  auto full_path{resolve_path(path)};
+  int fd{::open(full_path.c_str(), fi->flags, mode)};
+  if (fd == -1) {
+    return -errno;
+  }
+  fi->fh = fd;
+  return 0;
+}
+
+int IOFS::utimens(const char *path, const timespec ts[2], [[maybe_unused]] fuse_file_info *fi) {
+  TimerGuard timer{IOOp::utimens};
+  auto full_path{resolve_path(path)};
+  /* don't use utime/utimes since they follow symlinks */
+  int res{::utimensat(0, full_path.c_str(), ts, AT_SYMLINK_NOFOLLOW)};
+  return (res == -1) ? -errno : 0;
+}
+
+int IOFS::write_buf([[maybe_unused]] const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi) {
+  TimerGuard timer{IOOp::write_buf, 0};
+  size_t size{fuse_buf_size(buf)};
+  struct fuse_bufvec dst = FUSE_BUFVEC_INIT(size);
+  dst.buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
+  dst.buf[0].fd = fi->fh;
+  dst.buf[0].pos = offset;
+  ssize_t res{fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK)};
+  if (res >= 0) {
+    timer.update_size(static_cast<size_t>(res));
+  }
+  return static_cast<int>(res);
+}
+
+int IOFS::read_buf([[maybe_unused]] const char *path, fuse_bufvec **bufp, size_t size, off_t offset,
+    fuse_file_info *fi) {
+  TimerGuard timer{IOOp::read_buf, 0};
+  // Use malloc, as FUSE will use free, not delete
+  auto *src{static_cast<struct fuse_bufvec *>(std::malloc(sizeof(struct fuse_bufvec)))};
+  if (!src) {
+    return -ENOMEM;
+  }
+  timer.update_size(size);
+  *src = FUSE_BUFVEC_INIT(size);
+  src->buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
+  src->buf[0].fd = fi->fh;
+  src->buf[0].pos = offset;
+  *bufp = src;
+  return 0;
+}
+
+int IOFS::flock([[maybe_unused]] const char *path, fuse_file_info *fi, int op) {
+  TimerGuard timer{IOOp::flock};
+  int res{::flock(fi->fh, op)};
+  return (res == -1) ? -errno : 0;
+}
+int IOFS::fallocate([[maybe_unused]] const char *path, int mode, off_t offset, off_t length, fuse_file_info *fi) {
+  if (mode) {
+    return -EOPNOTSUPP;
+  }
+  TimerGuard timer{IOOp::fallocate};
+  int err{::posix_fallocate(fi->fh, offset, length)};
+  return -err;
+}
+
+std::filesystem::path IOFS::resolve_path(const char *path) const {
+  return m_source_root / std::filesystem::path(path).relative_path();
 }
