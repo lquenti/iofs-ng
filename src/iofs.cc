@@ -390,12 +390,12 @@ int IOFS::write_buf([[maybe_unused]] const char *path, fuse_bufvec *buf, off_t o
   TimerGuard timer{IOOp::write_buf, 0};
   size_t size{fuse_buf_size(buf)};
 
-  // This is a C style macro, but thats fine...
-  #pragma GCC diagnostic push
-  #pragma GCC diagnostic ignored "-Wold-style-cast"
-  #pragma GCC diagnostic ignored "-Wpedantic"
+// This is a C style macro, but thats fine...
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#pragma GCC diagnostic ignored "-Wpedantic"
   struct fuse_bufvec dst = FUSE_BUFVEC_INIT(size);
-  #pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
 
   dst.buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
   dst.buf[0].fd = static_cast<int>(fi->fh);
@@ -417,12 +417,12 @@ int IOFS::read_buf([[maybe_unused]] const char *path, fuse_bufvec **bufp, size_t
   }
   timer.update_size(size);
 
-  // This is a C style macro, but thats fine...
-  #pragma GCC diagnostic push
-  #pragma GCC diagnostic ignored "-Wold-style-cast"
-  #pragma GCC diagnostic ignored "-Wpedantic"
+// This is a C style macro, but thats fine...
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#pragma GCC diagnostic ignored "-Wpedantic"
   *src = FUSE_BUFVEC_INIT(size);
-  #pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
 
   src->buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
   src->buf[0].fd = static_cast<int>(fi->fh);

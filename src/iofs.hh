@@ -60,6 +60,10 @@ class TimerGuard {
   using clock_type = std::chrono::high_resolution_clock;
   explicit TimerGuard(IOOp op, size_t init_s = 1) : m_operation{op}, m_size{init_s}, m_start{clock_type::now()} {}
   ~TimerGuard();
+  TimerGuard(const TimerGuard &) = delete;
+  TimerGuard &operator=(const TimerGuard &) = delete;
+  TimerGuard(TimerGuard &&) = delete;
+  TimerGuard &operator=(TimerGuard &&) = delete;
   void update_size(size_t s);
 
  private:
