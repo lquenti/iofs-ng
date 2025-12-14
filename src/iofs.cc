@@ -1,33 +1,31 @@
 
 #include "iofs.hh"
 
+#include <fcntl.h>
+#include <sys/statvfs.h>
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <fcntl.h>
-#include <sys/statvfs.h>
 #define FUSE_USE_VERSION 36
-#include <filesystem>
+#include <dirent.h>
 #include <fuse.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
-#include <sys/stat.h>
-#include <sys/xattr.h>
-#include <sys/types.h>
-#include <dirent.h>
-#include <sys/file.h>
+#include <filesystem>
 #include <print>
-
 
 TimerGuard::~TimerGuard() {
   auto end{clock_type::now()};
-  auto dur{std::chrono::duration_cast<std::chrono::nanoseconds>(end-m_start)};
+  auto dur{std::chrono::duration_cast<std::chrono::nanoseconds>(end - m_start)};
   // TODO record metric here (only if it wasnt done 0 times)
 }
 
-void TimerGuard::update_size(size_t s) {
-  m_size=s;
-}
+void TimerGuard::update_size(size_t s) { m_size = s; }
 
 int IOFS::getattr(const char *path, struct stat *stbuf, [[maybe_unused]] fuse_file_info *fi) {
   TimerGuard timer{IOOp::getattr};
@@ -39,8 +37,8 @@ int IOFS::getattr(const char *path, struct stat *stbuf, [[maybe_unused]] fuse_fi
 int IOFS::readlink(const char *path, char *buf, size_t size) {
   TimerGuard timer{IOOp::readlink};
   auto full_path{resolve_path(path)};
-  ssize_t res{::readlink(full_path.c_str(), buf, size-1)};
-  if (res==-1) {
+  ssize_t res{::readlink(full_path.c_str(), buf, size - 1)};
+  if (res == -1) {
     return -errno;
   }
   buf[res] = '\0';
@@ -72,7 +70,7 @@ int IOFS::symlink(const char *from, const char *to) {
   TimerGuard timer{IOOp::symlink};
   auto full_path1{resolve_path(from)}, full_path2{resolve_path(to)};
   int res{::symlink(full_path1.c_str(), full_path2.c_str())};
-  return (res==-1) ? -errno : 0;
+  return (res == -1) ? -errno : 0;
 }
 
 int IOFS::rename(const char *from, const char *to, unsigned int flags) {
@@ -80,14 +78,14 @@ int IOFS::rename(const char *from, const char *to, unsigned int flags) {
   auto full_path1{resolve_path(from)}, full_path2{resolve_path(to)};
   // AT_FDCWD works since the paths are absolute
   int res{::renameat2(AT_FDCWD, full_path1.c_str(), AT_FDCWD, full_path2.c_str(), flags)};
-  return (res==-1) ? -errno : 0;
+  return (res == -1) ? -errno : 0;
 }
 
 int IOFS::link(const char *from, const char *to) {
   TimerGuard timer{IOOp::link};
   auto full_path1{resolve_path(from)}, full_path2{resolve_path(to)};
   int res{::link(full_path1.c_str(), full_path2.c_str())};
-  return (res==-1) ? -errno : 0;
+  return (res == -1) ? -errno : 0;
 }
 
 int IOFS::chmod(const char *path, mode_t mode, [[maybe_unused]] fuse_file_info *fi) {
@@ -101,14 +99,14 @@ int IOFS::chown(const char *path, uid_t uid, gid_t gid, [[maybe_unused]] fuse_fi
   TimerGuard timer{IOOp::chown};
   auto full_path{resolve_path(path)};
   int res{::lchown(full_path.c_str(), uid, gid)};
-  return (res==-1) ? -errno : 0;
+  return (res == -1) ? -errno : 0;
 }
 
 int IOFS::truncate(const char *path, off_t size, [[maybe_unused]] fuse_file_info *fi) {
   TimerGuard timer{IOOp::truncate};
   auto full_path{resolve_path(path)};
   int res{::truncate(full_path.c_str(), size)};
-  return (res==-1) ? -errno : 0;
+  return (res == -1) ? -errno : 0;
 }
 
 int IOFS::open(const char *path, fuse_file_info *fi) {
@@ -206,19 +204,17 @@ int IOFS::removexattr(const char *path, const char *name) {
 }
 
 struct DirHandle {
-    DIR *dp{nullptr};
-    struct dirent *entry{nullptr};
-    off_t offset{0};
-    ~DirHandle() {
-        if (dp) {
-          closedir(dp);
-        }
+  DIR *dp{nullptr};
+  struct dirent *entry{nullptr};
+  off_t offset{0};
+  ~DirHandle() {
+    if (dp) {
+      closedir(dp);
     }
+  }
 };
 
-static DirHandle *get_dir_handle(fuse_file_info *fi) {
-    return reinterpret_cast<DirHandle*>(fi->fh);
-}
+static DirHandle *get_dir_handle(fuse_file_info *fi) { return reinterpret_cast<DirHandle *>(fi->fh); }
 
 int IOFS::opendir(const char *path, fuse_file_info *fi) {
   std::unique_ptr<DirHandle> d{std::make_unique<DirHandle>()};
@@ -226,7 +222,7 @@ int IOFS::opendir(const char *path, fuse_file_info *fi) {
     TimerGuard timer{IOOp::opendir};
     auto full_path{resolve_path(path)};
     d->dp = ::opendir(full_path.c_str());
-  } // Make the timer guard commit early
+  }  // Make the timer guard commit early
   if (!d->dp) {
     return -errno;
   }
@@ -236,15 +232,15 @@ int IOFS::opendir(const char *path, fuse_file_info *fi) {
 }
 
 int IOFS::readdir([[maybe_unused]] const char *path, void *buf, fuse_fill_dir_t filler, off_t offset,
-    fuse_file_info *fi, fuse_readdir_flags flags) {
+                  fuse_file_info *fi, fuse_readdir_flags flags) {
   TimerGuard timer{IOOp::readdir};
 
   // stored in opendir
   DirHandle *d{get_dir_handle(fi)};
 
   // Seek if fuse asks an offset where we didnt stop before
-  // Note: Since std::filesystem doesnt offer a RandomIterator, it makes sense to stick with the C API here, even
-  // though we aim to "modernize" it...
+  // Note: Since std::filesystem doesnt offer a RandomIterator, it makes sense
+  // to stick with the C API here, even though we aim to "modernize" it...
   if (offset != d->offset) {
     ::seekdir(d->dp, offset);
     d->entry = nullptr;
@@ -261,27 +257,29 @@ int IOFS::readdir([[maybe_unused]] const char *path, void *buf, fuse_fill_dir_t 
       }
     }
 
-    // Check if we are in Plus Mode. `enum fuse_readdir_flags` describes it as follows:
+    // Check if we are in Plus Mode. `enum fuse_readdir_flags` describes it as
+    // follows:
     //
-	  // "Plus" mode.
+    // "Plus" mode.
     //
-	  // The kernel wants to prefill the inode cache during readdir.  The
-	  // filesystem may honour this by filling in the attributes and setting
-	  // FUSE_FILL_DIR_FLAGS for the filler function.  The filesystem may also
-	  // just ignore this flag completely.
+    // The kernel wants to prefill the inode cache during readdir.  The
+    // filesystem may honour this by filling in the attributes and setting
+    // FUSE_FILL_DIR_FLAGS for the filler function.  The filesystem may also
+    // just ignore this flag completely.
     //
-    // As I understand it, the idea is that Plus mode already pre-fetches the metadata, so that it doesnt need a
-    // full getattr/stat call later...
+    // As I understand it, the idea is that Plus mode already pre-fetches the
+    // metadata, so that it doesnt need a full getattr/stat call later...
     //
-    // Furthermore, I think we could just set it everytime, as `enum fuse_fill_dir_flags` says that
+    // Furthermore, I think we could just set it everytime, as `enum
+    // fuse_fill_dir_flags` says that
     //
-	  // It is okay to set FUSE_FILL_DIR_PLUS if FUSE_READDIR_PLUS is not set
-	  // and vice versa.
+    // It is okay to set FUSE_FILL_DIR_PLUS if FUSE_READDIR_PLUS is not set
+    // and vice versa.
     //
-    // But, in line with Chesterton's Fence, we won't touch it until I got a feel for readdir and we have proper
-    // stress/fuzz/correctness testing
+    // But, in line with Chesterton's Fence, we won't touch it until I got a
+    // feel for readdir and we have proper stress/fuzz/correctness testing
     struct stat st{}; /* zero-init through value init */
-    enum fuse_fill_dir_flags fill_flags{FUSE_FILL_DIR_DEFAULTS};
+    enum fuse_fill_dir_flags fill_flags { FUSE_FILL_DIR_DEFAULTS };
     if (flags & FUSE_READDIR_PLUS) {
       int res{::fstatat(dirfd(d->dp), d->entry->d_name, &st, AT_SYMLINK_NOFOLLOW)};
       if (res != -1) {
@@ -293,20 +291,21 @@ int IOFS::readdir([[maybe_unused]] const char *path, void *buf, fuse_fill_dir_t 
     // If no Plus mode, or fstatat failed, we fill it with minimal mock info
     if (!(fill_flags & FUSE_FILL_DIR_PLUS)) {
       st.st_ino = d->entry->d_ino;
-      st.st_mode = d->entry->d_type << 12; // ??
+      st.st_mode = d->entry->d_type << 12;  // ??
     }
 
-    // get offset of *next* entry (as we processed the last one from a POSIX perspective)
+    // get offset of *next* entry (as we processed the last one from a POSIX
+    // perspective)
     off_t nextoff = ::telldir(d->dp);
 
     // To quote `fuse_operations::readdir`
-	  // The filesystem may choose between two modes of operation:
+    // The filesystem may choose between two modes of operation:
     // ...
-	  // 2) The readdir implementation keeps track of the offsets of the
-	  // directory entries.  It uses the offset parameter and always
-	  // passes non-zero offset to the filler function.  When the buffer
-	  // is full (or an error happens) the filler function will return
-	  // '1'.
+    // 2) The readdir implementation keeps track of the offsets of the
+    // directory entries.  It uses the offset parameter and always
+    // passes non-zero offset to the filler function.  When the buffer
+    // is full (or an error happens) the filler function will return
+    // '1'.
     if (filler(buf, d->entry->d_name, &st, nextoff, fill_flags)) {
       break;
     }
@@ -325,10 +324,11 @@ int IOFS::releasedir(const char *path, fuse_file_info *fi) {
   return 0;
 }
 
-void *IOFS::init (fuse_conn_info *conn, fuse_config *cfg) {
-  // The initing of the IOFS object (i.e. the construction) already happens in main
-  // (passed to FUSE via `user_data` parameter of `fuse_main`)
-  // I think its cleaner to handle IOFS creation problems *before* already being in FUSE space with background logs...
+void *IOFS::init(fuse_conn_info *conn, fuse_config *cfg) {
+  // The initing of the IOFS object (i.e. the construction) already happens in
+  // main (passed to FUSE via `user_data` parameter of `fuse_main`) I think its
+  // cleaner to handle IOFS creation problems *before* already being in FUSE
+  // space with background logs...
 
   // see documentation of options in fuse.h
   // cfg->direct_io = 1;
@@ -401,7 +401,7 @@ int IOFS::write_buf([[maybe_unused]] const char *path, fuse_bufvec *buf, off_t o
 }
 
 int IOFS::read_buf([[maybe_unused]] const char *path, fuse_bufvec **bufp, size_t size, off_t offset,
-    fuse_file_info *fi) {
+                   fuse_file_info *fi) {
   TimerGuard timer{IOOp::read_buf, 0};
   // Use malloc, as FUSE will use free, not delete
   auto *src{static_cast<struct fuse_bufvec *>(std::malloc(sizeof(struct fuse_bufvec)))};
