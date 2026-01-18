@@ -52,7 +52,8 @@ enum class IOOp {
   write_buf,
   read_buf,
   flock,
-  fallocate
+  fallocate,
+  last // Synthetic element to mark the end/count of ops
 };
 
 class TimerGuard {

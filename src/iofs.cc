@@ -1,5 +1,6 @@
 
 #include "iofs.hh"
+#include "monitoring.hh"
 
 #include <fcntl.h>
 #include <sys/statvfs.h>
@@ -22,7 +23,10 @@
 TimerGuard::~TimerGuard() {
   auto end{clock_type::now()};
   auto dur{std::chrono::duration_cast<std::chrono::nanoseconds>(end - m_start)};
-  // TODO record metric here (only if it wasnt done 0 times)
+  if (m_size > 0) {
+    auto dur_ns{std::chrono::duration_cast<std::chrono::nanoseconds>(end - m_start).count()};
+    Monitoring::instance().record(m_operation, static_cast<uint64_t>(dur_ns), m_size);
+  }
 }
 
 void TimerGuard::update_size(size_t s) { m_size = s; }
@@ -325,6 +329,9 @@ int IOFS::releasedir([[maybe_unused]] const char *path, fuse_file_info *fi) {
 }
 
 void *IOFS::init([[maybe_unused]] fuse_conn_info *conn, fuse_config *cfg) {
+  // Start the monitoring server
+  Monitoring::instance().start_server(9090);
+
   // The initing of the IOFS object (i.e. the construction) already happens in
   // main (passed to FUSE via `user_data` parameter of `fuse_main`) I think its
   // cleaner to handle IOFS creation problems *before* already being in FUSE
