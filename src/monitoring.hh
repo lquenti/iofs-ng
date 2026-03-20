@@ -18,8 +18,10 @@ public:
   void start_server(int port);
 
 private:
-  Monitoring() = default;
+  Monitoring();
 
   std::string generate_prometheus_output() const;
   static const char *op_to_string(IOOp op);
+
+  std::string m_hostname;
 };

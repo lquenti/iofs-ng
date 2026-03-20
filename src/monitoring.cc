@@ -3,8 +3,19 @@
 #include <sstream>
 #include <thread>
 #include <print>
+#include <unistd.h>
 
+#include "config.hh"
 #include <httplib.hh>
+
+Monitoring::Monitoring() {
+  char buf[HOST_NAME_MAX + 1];
+  if (gethostname(buf, sizeof(buf)) == 0) {
+    m_hostname = buf;
+  } else {
+    m_hostname = "COULD NOT BE FETCHED";
+  }
+}
 
 void Monitoring::record(IOOp op, uint64_t duration_ns, uint64_t units) {
   // TODO
@@ -31,7 +42,9 @@ std::string Monitoring::generate_prometheus_output() const {
   // meta informations
   ss << "# HELP application_info Static information about the running binary.\n";
   ss << "# TYPE application_info gauge\n";
-  ss << "application_info{toolname=\"my_app\",version=\"v1.2.3\",hostname=\"prod-web-01\"} 1\n";
+  ss << "application_info{toolname=\"iofs-ng\",version=\"v"
+    << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_PATCH
+    << "\",hostname=\"" << m_hostname << "\"} 1\n";
 
   // plugins loaded TODO
   // # HELP exporter_plugin_info Information about loaded plugins.
