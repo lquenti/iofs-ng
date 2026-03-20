@@ -95,11 +95,11 @@ struct fuse_operations iofs_oper = {
 int main(int argc, char **argv) {
   CliArgs arguments{parse_args(argc, argv)};
 
-  IOFS fs_instance{arguments.source_dir};
+  IOFS fs_instance{fs::canonical(arguments.source_dir)};
 
   umask(0);
 
-  std::string mountpoint_str = arguments.mountpoint.string();
+  std::string mountpoint_str = fs::canonical(arguments.mountpoint).string();
 
   // They are stack-allocated as FUSE doesn't accept const char*
   char arg_fg[] = "-f";
