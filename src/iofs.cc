@@ -1,4 +1,3 @@
-
 #include "iofs.hh"
 #include "monitoring.hh"
 
@@ -22,7 +21,6 @@
 
 TimerGuard::~TimerGuard() {
   auto end{clock_type::now()};
-  auto dur{std::chrono::duration_cast<std::chrono::nanoseconds>(end - m_start)};
   if (m_size > 0) {
     auto dur_ns{std::chrono::duration_cast<std::chrono::nanoseconds>(end - m_start).count()};
     Monitoring::instance().record(m_operation, static_cast<uint64_t>(dur_ns), m_size);

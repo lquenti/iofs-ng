@@ -7,13 +7,7 @@
 #include <httplib.hh>
 
 void Monitoring::record(IOOp op, uint64_t duration_ns, uint64_t units) {
-  auto idx = static_cast<size_t>(op);
-  if (idx < m_metrics.size()) { // This could be an assert in the future I think?
-    // Relaxed memory order is okay since time doesnt matter in acc
-    m_metrics[idx].count.fetch_add(1, std::memory_order_relaxed);
-    m_metrics[idx].total_units.fetch_add(units, std::memory_order_relaxed);
-    m_metrics[idx].total_duration_ns.fetch_add(duration_ns, std::memory_order_relaxed);
-  }
+  // TODO
 }
 
 void Monitoring::start_server(int port) {
@@ -34,36 +28,17 @@ void Monitoring::start_server(int port) {
 std::string Monitoring::generate_prometheus_output() const {
   std::stringstream ss;
 
-  // 1. Operation Counts
-  ss << "# HELP iofs_ops_total Total number of IO operations\n";
-  ss << "# TYPE iofs_ops_total counter\n";
-  for (size_t i = 0; i < m_metrics.size(); ++i) {
-    auto val = m_metrics[i].count.load(std::memory_order_relaxed);
-    if (val > 0) {
-      ss << "iofs_ops_total{op=\"" << op_to_string(static_cast<IOOp>(i)) << "\"} " << val << "\n";
-    }
-  }
+  // meta informations
+  ss << "# HELP application_info Static information about the running binary.\n";
+  ss << "# TYPE application_info gauge\n";
+  ss << "application_info{toolname=\"my_app\",version=\"v1.2.3\",hostname=\"prod-web-01\"} 1\n";
 
-  // 2. Duration (converted to seconds)
-  ss << "\n# HELP iofs_duration_seconds_total Total time spent in operations\n";
-  ss << "# TYPE iofs_duration_seconds_total counter\n";
-  for (size_t i = 0; i < m_metrics.size(); ++i) {
-    auto ns = m_metrics[i].total_duration_ns.load(std::memory_order_relaxed);
-    if (ns > 0) {
-      double seconds = static_cast<double>(ns) / 1.0e9;
-      ss << "iofs_duration_seconds_total{op=\"" << op_to_string(static_cast<IOOp>(i)) << "\"} " << seconds << "\n";
-    }
-  }
-
-  // 3. Units (Bytes/Calls)
-  ss << "\n# HELP iofs_units_total Total units (bytes/entries) processed\n";
-  ss << "# TYPE iofs_units_total counter\n";
-  for (size_t i = 0; i < m_metrics.size(); ++i) {
-    auto val = m_metrics[i].total_units.load(std::memory_order_relaxed);
-    if (val > 0) {
-      ss << "iofs_units_total{op=\"" << op_to_string(static_cast<IOOp>(i)) << "\"} " << val << "\n";
-    }
-  }
+  // plugins loaded TODO
+  // # HELP exporter_plugin_info Information about loaded plugins.
+  // # TYPE exporter_plugin_info gauge
+  // exporter_plugin_info{name="plugin1"} 1
+  // exporter_plugin_info{name="plugin2"} 1
+  // exporter_plugin_info{name="plugin3"} 1
 
   return ss.str();
 }
