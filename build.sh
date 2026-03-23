@@ -17,7 +17,10 @@ g++ -g3 \
 
 # build the plugins
 pushd plugins
-g++ -g3 -fPIC -shared -std=c++23 sample.cc -o sample.so
+PLUGINS=("sample" "lastn")
+for p in "${PLUGINS[@]}"; do
+  g++ -g3 -fPIC -shared -std=c++23 "$p.cc" -o "$p.so"
+done
 popd
 
 popd

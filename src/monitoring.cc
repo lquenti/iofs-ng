@@ -6,7 +6,7 @@
 #include <unistd.h>
 
 #include "config.hh"
-#include <httplib.hh>
+#include "../include/httplib.hh"
 
 Monitoring::Monitoring() {
   char buf[HOST_NAME_MAX + 1];
@@ -65,12 +65,12 @@ std::string Monitoring::generate_prometheus_output() const {
        << "\",version=\"" << plugin->get_version() << "\"} 1\n";
   }
 
-  char buffer[16*1024];
+  thread_local auto buffer{std::make_unique<char []>(PLUGIN_BUFFER_BYTES)};
   for (auto& plugin : m_plugins) {
     if (plugin.api()->poll_prometheus_metrics) {
-      size_t written{plugin->poll_prometheus_metrics(buffer, sizeof(buffer))};
-      if (written > 0 && written < sizeof(buffer)) {
-        ss << '\n' << std::string_view(buffer, written);
+      size_t written{plugin->poll_prometheus_metrics(buffer.get(), PLUGIN_BUFFER_BYTES)};
+      if (written > 0 && written < PLUGIN_BUFFER_BYTES) {
+        ss << '\n' << std::string_view(buffer.get(), written);
       }
     }
   }
