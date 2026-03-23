@@ -70,7 +70,7 @@ std::string Monitoring::generate_prometheus_output() const {
     if (plugin.api()->poll_prometheus_metrics) {
       size_t written{plugin->poll_prometheus_metrics(buffer, sizeof(buffer))};
       if (written > 0 && written < sizeof(buffer)) {
-        ss << std::string_view(buffer, written);
+        ss << '\n' << std::string_view(buffer, written);
       }
     }
   }
