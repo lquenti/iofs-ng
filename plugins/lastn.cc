@@ -91,10 +91,11 @@ public:
     uint64_t start{(head >= LAST_N) ? (head % LAST_N) : 0}; // oldest entry
 
     size_t offset{0};
+    uint64_t seq_base{head - filled}; // absolute seq of the oldest entry in the window
 
     // Write header once
     int written = std::snprintf(buf, buf_size,
-      "# HELP lastN Per-entry I/O record. i=0 is oldest. size label is bytes transferred.\n"
+      "# HELP lastN Per-entry I/O record. i=global sequence number. size label is bytes transferred.\n"
       "# TYPE lastN gauge\n"
     );
     if (written < 0) return 0;
@@ -109,7 +110,7 @@ public:
       const Entry &e = slot.value();
       written = std::snprintf(buf + offset, buf_size - offset,
         "lastN{i=\"%llu\",size=\"%llu\",op=\"%s\"} %llu\n",
-        static_cast<unsigned long long>(i),
+        static_cast<unsigned long long>(seq_base + i),
         static_cast<unsigned long long>(e.size_bytes),
         e.is_write ? "w" : "r",
         static_cast<unsigned long long>(e.duration_ns)
