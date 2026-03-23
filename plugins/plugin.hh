@@ -63,6 +63,21 @@ static inline int validate_iofs_plugin(const struct IofsPlugin *p) {
   return 1;
 }
 
+static inline const char *iofs_op_to_string(iofs_op_t op) {
+  static const char *const names[] = {
+    "getattr", "readlink", "mkdir", "unlink", "rmdir", "symlink", "rename",
+    "link", "chmod", "chown", "truncate", "open", "read", "write", "statfs",
+    "flush", "release", "fsync", "setxattr", "getxattr", "listxattr",
+    "removexattr", "opendir", "readdir", "releasedir", "access", "create",
+    "utimens", "write_buf", "read_buf", "flock", "fallocate"
+  };
+
+  if (op >= 0 && op < IOFS_OP_COUNT) {
+    return names[op];
+  }
+  return "unknown";
+}
+
 #ifdef __cplusplus
 }
 #endif

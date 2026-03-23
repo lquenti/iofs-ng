@@ -23,7 +23,6 @@ private:
   Monitoring();
 
   std::string generate_prometheus_output() const;
-  static const char *op_to_string(IOOp op);
 
   std::string m_hostname;
   std::vector<PluginInstance> m_plugins;

@@ -371,7 +371,7 @@ public:
       }
       emit(buf, buf_size, offset,
         "iofs_duration_ns_total{op=\"%s\"} %llu\n",
-        OP_NAMES[i],
+        iofs_op_to_string(static_cast<iofs_op_t>(i)),
         static_cast<unsigned long long>(m_duration_ns[i].load(std::memory_order_relaxed)));
     }
 
