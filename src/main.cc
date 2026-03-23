@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <vector>
+#include <print>
 #include "monitoring.hh"
 
 #define FUSE_USE_VERSION 36

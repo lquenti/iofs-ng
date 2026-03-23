@@ -4,7 +4,10 @@
 #include <atomic>
 #include <cstdio>
 
-class DummyPlugin {
+// Exmaple plugin.
+// - Takes all read/write operations, and accumulates them.
+
+class SamplePlugin {
   int id;
   std::string name;
 
@@ -13,20 +16,21 @@ class DummyPlugin {
   std::atomic<uint64_t> total_bytes_transferred{0};
 
 public:
-  DummyPlugin() {
+  SamplePlugin() {
     static std::atomic<int> counter{0};
     id = ++counter;
     name = "Instance_" + std::to_string(id);
-    std::cout << "[DummyPlugin " << name << "] Constructed\n";
+    std::cout << "[SamplePlugin " << name << "] Constructed\n";
   }
 
-  ~DummyPlugin() {
-    std::cout << "[DummyPlugin " << name << "] Destructed\n";
-    std::cout << "[DummyPlugin " << name << "] Final Stats - Ops: " << total_ops.load()
+  ~SamplePlugin() {
+    std::cout << "[SamplePlugin " << name << "] Destructed\n";
+    std::cout << "[SamplePlugin " << name << "] Final Stats - Ops: " << total_ops.load()
               << " | Bytes: " << total_bytes_transferred.load() << "\n";
   }
 
   void record(iofs_op_t op, uint64_t duration_ns, uint64_t units) {
+    // relaxed since I dont care about the order (only looking at then end) (and its commutative/associative)
     total_ops.fetch_add(1, std::memory_order_relaxed);
     total_duration_ns.fetch_add(duration_ns, std::memory_order_relaxed);
 
@@ -47,20 +51,22 @@ public:
       static_cast<unsigned long long>(total_bytes_transferred.load(std::memory_order_relaxed))
     );
 
-    if (written < 0) return 0;
+    if (written < 0) {
+      return 0;
+    }
     return static_cast<size_t>(written);
   }
 };
 
-static thread_local DummyPlugin* g_instance = nullptr;
+static thread_local SamplePlugin *g_instance = nullptr;
 
 static struct IofsPlugin plugin_api = {
-  .get_name = []() -> const char* { return "DummyAccumulator"; },
+  .get_name = []() -> const char* { return "SamplePlugin"; },
   .get_version = []() -> const char* { return "0.1.0"; },
 
-  .init = []() -> void* { return new DummyPlugin(); },
-  .bind = [](void* ctx) { g_instance = static_cast<DummyPlugin*>(ctx); },
-  .destroy = [](void* ctx) { delete static_cast<DummyPlugin*>(ctx); },
+  .init = []() -> void* { return new SamplePlugin(); },
+  .bind = [](void* ctx) { g_instance = static_cast<SamplePlugin*>(ctx); },
+  .destroy = [](void* ctx) { delete static_cast<SamplePlugin*>(ctx); },
 
   .record = [](auto... args) { g_instance->record(args...); },
   .poll_prometheus_metrics = [](auto... args) { return g_instance->poll_metrics(args...); }

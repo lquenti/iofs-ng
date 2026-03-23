@@ -5,11 +5,20 @@
 #include <memory>
 #include <string>
 
-template <typename T, auto fn>
-using c_unique_ptr = std::unique_ptr<T, decltype([](T *ptr) { fn(ptr); })>;
+// Compiler cries about ODR with lambda instanciations, but I really like it, and may need it for future projects
+// template <typename T, auto fn>
+// using c_unique_ptr = std::unique_ptr<T, decltype([](T *ptr) { fn(ptr); })>;
+//
+// // deleters should return void
+// using LibHandle = c_unique_ptr<void, [](void *handle){dlclose(handle);}>;
 
-// deleters should return void
-using LibHandle = c_unique_ptr<void, [](void *handle){dlclose(handle);}>;
+struct DlCloseDeleter {
+  void operator()(void* handle) const {
+    dlclose(handle);
+  }
+};
+
+using LibHandle = std::unique_ptr<void, DlCloseDeleter>;
 
 class PluginInstance {
 public:
@@ -27,7 +36,7 @@ public:
   class ArrowChainProxy {
     struct IofsPlugin *api;
   public:
-    ArrowChainProxy(struct IofsPlugin *api, void *ctx);
+    ArrowChainProxy(struct IofsPlugin *a, void *ctx);
     ~ArrowChainProxy();
     struct IofsPlugin *operator->();
   };
