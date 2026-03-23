@@ -1,7 +1,44 @@
 #pragma once
 
-// Use if you want to enable zero copy through splicing
-#define USE_ZERO_COPY
+// Zero-copy (splice-based) I/O configuration
+// Uncomment USE_ZERO_COPY to enable splice-based `read_buf` / `write_buf`.
+// When enabled, you MUST also pick exactly one `ZERO_COPY_REPORT_*` mode below.
+//
+// Why: Unlike regular `read`/`write`, the splice path does not give us the actual number of bytes, instead we only know
+// what was *requested*, which sucks for small file IO. Depending on what you want to model, you have different chioces
+// below.
+//
+// #define USE_ZERO_COPY
+
+#ifdef USE_ZERO_COPY
+
+// `ZERO_COPY_REPORT_NONE:` `read_buf`/`write_buf` are used, but disregarded before sending to the loaded plugins.
+//
+// #define ZERO_COPY_REPORT_NONE
+
+// `ZERO_COPY_REPORT_UNDER` Always reports 1 byte.
+//
+// #define ZERO_COPY_REPORT_UNDER
+
+// `ZERO_COPY_REPORT_OVER`: Reports the requested buffer size. Can be a HUGE upper bound for small I/O.
+//   Imagine fetching 128KiB buffers when reading 16 byte files
+//
+// #define ZERO_COPY_REPORT_OVER
+
+// ZERO_COPY_REPORT_ACCURATE: Computes `min(requested_size, file_size - offset)`
+//   Very expensive, as it requires another `fstat` syscall per `read_buf` call.
+//   Note: `read_buf` only... see `write_buf` for why write is different...
+// #define ZERO_COPY_REPORT_ACCURATE
+
+#if !defined(ZERO_COPY_REPORT_NONE)    && \
+      !defined(ZERO_COPY_REPORT_UNDER)   && \
+      !defined(ZERO_COPY_REPORT_OVER)    && \
+      !defined(ZERO_COPY_REPORT_ACCURATE)
+#error "USE_ZERO_COPY is defined but no ZERO_COPY_REPORT_* mode was chosen. \
+  Pick one of: ZERO_COPY_REPORT_NONE, ZERO_COPY_REPORT_UNDER, ZERO_COPY_REPORT_OVER, ZERO_COPY_REPORT_ACCURATE"
+#endif
+
+#endif // USE_ZERO_COPY
 
 #include <fcntl.h>
 #include <sys/statvfs.h>
@@ -108,10 +145,10 @@ class IOFS {
   int access(const char *path, int mask);
   int create(const char *path, mode_t mode, fuse_file_info *fi);
   int utimens(const char *path, const timespec ts[2], fuse_file_info *fi);
-// #ifdef USE_ZERO_COPY
-//   int write_buf(const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi);
-//   int read_buf(const char *path, fuse_bufvec **bufp, size_t size, off_t offset, fuse_file_info *fi);
-// #endif
+#ifdef USE_ZERO_COPY
+  int write_buf(const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi);
+  int read_buf(const char *path, fuse_bufvec **bufp, size_t size, off_t offset, fuse_file_info *fi);
+#endif
   int flock(const char *path, fuse_file_info *fi, int op);
   int fallocate(const char *path, int mode, off_t offset, off_t length, fuse_file_info *fi);
 

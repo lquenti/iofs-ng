@@ -390,52 +390,89 @@ int IOFS::utimens(const char *path, const timespec ts[2], [[maybe_unused]] fuse_
   return (res == -1) ? -errno : 0;
 }
 
-// #ifdef USE_ZERO_COPY
-// int IOFS::write_buf([[maybe_unused]] const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi) {
-//   TimerGuard timer{IOOp::write_buf, 0};
-//   size_t size{fuse_buf_size(buf)};
-//
-// // This is a C style macro, but thats fine...
-// #pragma GCC diagnostic push
-// #pragma GCC diagnostic ignored "-Wold-style-cast"
-// #pragma GCC diagnostic ignored "-Wpedantic"
-//   struct fuse_bufvec dst = FUSE_BUFVEC_INIT(size);
-// #pragma GCC diagnostic pop
-//
-//   dst.buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
-//   dst.buf[0].fd = static_cast<int>(fi->fh);
-//   dst.buf[0].pos = offset;
-//   ssize_t res{fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK)};
-//   if (res >= 0) {
-//     timer.update_size(static_cast<size_t>(res));
-//   }
-//   return static_cast<int>(res);
-// }
-//
-// int IOFS::read_buf([[maybe_unused]] const char *path, fuse_bufvec **bufp, size_t size, off_t offset,
-//                    fuse_file_info *fi) {
-//   TimerGuard timer{IOOp::read_buf, 0};
-//   // Use malloc, as FUSE will use free, not delete
-//   auto *src{static_cast<struct fuse_bufvec *>(std::malloc(sizeof(struct fuse_bufvec)))};
-//   if (!src) {
-//     return -ENOMEM;
-//   }
-//   timer.update_size(size);
-//
-// // This is a C style macro, but thats fine...
-// #pragma GCC diagnostic push
-// #pragma GCC diagnostic ignored "-Wold-style-cast"
-// #pragma GCC diagnostic ignored "-Wpedantic"
-//   *src = FUSE_BUFVEC_INIT(size);
-// #pragma GCC diagnostic pop
-//
-//   src->buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
-//   src->buf[0].fd = static_cast<int>(fi->fh);
-//   src->buf[0].pos = offset;
-//   *bufp = src;
-//   return 0;
-// }
-// #endif
+#ifdef USE_ZERO_COPY
+int IOFS::write_buf([[maybe_unused]] const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi) {
+  // `write_buf` is a pain in the ass. For `read_buf`, we can find out the accurate reporting via
+  //   `min(requested_size, file_size - offset)`
+  // Unfortunately, this is not possible for `write_buf`.
+  // - `fuse_buf_copy` might just do a partial write (which differs from the logical write, for example in case you
+  //   wrote your benchmarker to capture specific characteristics)
+  // - `fstat` after write only works with a single concurrent writer that only strictly appends
+  //
+  // Thus, best effort, we fall back to `ZERO_COPY_REPORT_OVER`, i.e. the full `fuse_buf_size(buf)`. Be aware.
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#pragma GCC diagnostic ignored "-Wpedantic"
+  size_t requested_size{fuse_buf_size(buf)};
+  struct fuse_bufvec dst = FUSE_BUFVEC_INIT(requested_size);
+#pragma GCC diagnostic pop
+
+  dst.buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
+  dst.buf[0].fd = static_cast<int>(fi->fh);
+  dst.buf[0].pos = offset;
+
+#if defined(ZERO_COPY_REPORT_NONE)
+  TimerGuard timer{IOOp::write_buf, 0};
+  ssize_t res{fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK)};
+#elif defined(ZERO_COPY_REPORT_UNDER)
+  TimerGuard timer{IOOp::write_buf, 1};
+  ssize_t res{fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK)};
+#elif defined(ZERO_COPY_REPORT_OVER) || defined(ZERO_COPY_REPORT_ACCURATE)
+  // ACCURATE falls back to OVER for write_buf — see the comment above.
+  TimerGuard timer{IOOp::write_buf, requested_size};
+  ssize_t res{fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK)};
+#endif
+
+  return static_cast<int>(res);
+}
+
+int IOFS::read_buf([[maybe_unused]] const char *path, fuse_bufvec **bufp, size_t size, off_t offset,
+                   fuse_file_info *fi) {
+  // Determine reported unit size according to the chosen mode.
+#if defined(ZERO_COPY_REPORT_NONE)
+  TimerGuard timer{IOOp::read_buf, 0};
+#elif defined(ZERO_COPY_REPORT_UNDER)
+  TimerGuard timer{IOOp::read_buf, 1};
+#elif defined(ZERO_COPY_REPORT_OVER)
+  TimerGuard timer{IOOp::read_buf, size};
+#elif defined(ZERO_COPY_REPORT_ACCURATE)
+  // Compute min(requested_size, file_size - offset) via fstat.
+  // This is one extra syscall per read_buf, but gives the true upper bound
+  // on bytes that can actually be transferred from this offset.
+  size_t accurate_size{size};
+  struct stat st{};
+  if (::fstat(static_cast<int>(fi->fh), &st) == 0) {
+    off_t available{st.st_size - offset};
+    if (available <= 0) {
+      accurate_size = 0;
+    } else {
+      accurate_size = std::min(size, static_cast<size_t>(available));
+    }
+  }
+  // If fstat fails we fall back to the requested size (OVER semantics).
+  TimerGuard timer{IOOp::read_buf, accurate_size};
+#endif
+
+  // Use malloc: FUSE takes ownership and will free() this, not delete it.
+  auto *src{static_cast<struct fuse_bufvec *>(std::malloc(sizeof(struct fuse_bufvec)))};
+  if (!src) {
+    return -ENOMEM;
+  }
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#pragma GCC diagnostic ignored "-Wpedantic"
+  *src = FUSE_BUFVEC_INIT(size);
+#pragma GCC diagnostic pop
+
+  src->buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
+  src->buf[0].fd = static_cast<int>(fi->fh);
+  src->buf[0].pos = offset;
+  *bufp = src;
+  return 0;
+}
+#endif // USE_ZERO_COPY
 
 int IOFS::flock([[maybe_unused]] const char *path, fuse_file_info *fi, int op) {
   TimerGuard timer{IOOp::flock};

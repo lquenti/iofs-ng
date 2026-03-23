@@ -89,10 +89,10 @@ struct fuse_operations iofs_oper = {
 // .bmap    = nullptr,
 // .ioctl   = nullptr,
 // .poll    = nullptr,
-// #ifdef USE_ZERO_COPY
-//     .write_buf = [](auto... args) { return get_fs()->write_buf(args...); },
-//     .read_buf = [](auto... args) { return get_fs()->read_buf(args...); },
-// #endif
+#ifdef USE_ZERO_COPY
+    .write_buf = [](auto... args) { return get_fs()->write_buf(args...); },
+    .read_buf = [](auto... args) { return get_fs()->read_buf(args...); },
+#endif
     .flock = [](auto... args) { return get_fs()->flock(args...); },
     .fallocate = [](auto... args) { return get_fs()->fallocate(args...); },
 };
