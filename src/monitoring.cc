@@ -18,6 +18,7 @@ Monitoring::Monitoring() {
 }
 
 void Monitoring::load_plugins(const std::vector<std::string> &plugin_paths) {
+  m_plugins.reserve(plugin_paths.size());
   for (const auto &path: plugin_paths) {
     // throws
     m_plugins.emplace_back(path);
