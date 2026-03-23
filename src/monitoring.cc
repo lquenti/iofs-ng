@@ -17,8 +17,19 @@ Monitoring::Monitoring() {
   }
 }
 
+void Monitoring::load_plugins(const std::vector<std::string> &plugin_paths) {
+  for (const auto &path: plugin_paths) {
+    // throws
+    m_plugins.emplace_back(path);
+  }
+}
+
 void Monitoring::record(IOOp op, uint64_t duration_ns, uint64_t units) {
-  // TODO
+  // Cast C++ enum to C-ABI enum
+  iofs_op_t c_op{static_cast<iofs_op_t>(op)};
+  for (auto& plugin : m_plugins) {
+    plugin->record(c_op, duration_ns, units);
+  }
 }
 
 void Monitoring::start_server(int port) {
@@ -46,12 +57,23 @@ std::string Monitoring::generate_prometheus_output() const {
     << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_PATCH
     << "\",hostname=\"" << m_hostname << "\"} 1\n";
 
-  // plugins loaded TODO
-  // # HELP exporter_plugin_info Information about loaded plugins.
-  // # TYPE exporter_plugin_info gauge
-  // exporter_plugin_info{name="plugin1"} 1
-  // exporter_plugin_info{name="plugin2"} 1
-  // exporter_plugin_info{name="plugin3"} 1
+  // plugin info
+  ss << "# HELP exporter_plugin_info Information about loaded plugins.\n";
+  ss << "# TYPE exporter_plugin_info gauge\n";
+  for (const auto& plugin : m_plugins) {
+    ss << "exporter_plugin_info{name=\"" << plugin->get_name()
+       << "\",version=\"" << plugin->get_version() << "\"} 1\n";
+  }
+
+  char buffer[16*1024];
+  for (auto& plugin : m_plugins) {
+    if (plugin.api()->poll_prometheus_metrics) {
+      size_t written{plugin->poll_prometheus_metrics(buffer, sizeof(buffer))};
+      if (written > 0 && written < sizeof(buffer)) {
+        ss << std::string_view(buffer, written);
+      }
+    }
+  }
 
   return ss.str();
 }

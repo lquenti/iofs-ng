@@ -1,6 +1,7 @@
 #pragma once
 
 #include "iofs.hh"
+#include "plugin_wrapper.hh"
 #include <string>
 
 // Automatically determine size based on the synthetic 'last' enum
@@ -14,6 +15,7 @@ public:
     return inst;
   }
 
+  void load_plugins(const std::vector<std::string> &plugin_paths);
   void record(IOOp op, uint64_t duration_ns, uint64_t units);
   void start_server(int port);
 
@@ -24,4 +26,5 @@ private:
   static const char *op_to_string(IOOp op);
 
   std::string m_hostname;
+  std::vector<PluginInstance> m_plugins;
 };

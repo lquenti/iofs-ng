@@ -390,52 +390,52 @@ int IOFS::utimens(const char *path, const timespec ts[2], [[maybe_unused]] fuse_
   return (res == -1) ? -errno : 0;
 }
 
-#ifdef USE_ZERO_COPY
-int IOFS::write_buf([[maybe_unused]] const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi) {
-  TimerGuard timer{IOOp::write_buf, 0};
-  size_t size{fuse_buf_size(buf)};
-
-// This is a C style macro, but thats fine...
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wold-style-cast"
-#pragma GCC diagnostic ignored "-Wpedantic"
-  struct fuse_bufvec dst = FUSE_BUFVEC_INIT(size);
-#pragma GCC diagnostic pop
-
-  dst.buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
-  dst.buf[0].fd = static_cast<int>(fi->fh);
-  dst.buf[0].pos = offset;
-  ssize_t res{fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK)};
-  if (res >= 0) {
-    timer.update_size(static_cast<size_t>(res));
-  }
-  return static_cast<int>(res);
-}
-
-int IOFS::read_buf([[maybe_unused]] const char *path, fuse_bufvec **bufp, size_t size, off_t offset,
-                   fuse_file_info *fi) {
-  TimerGuard timer{IOOp::read_buf, 0};
-  // Use malloc, as FUSE will use free, not delete
-  auto *src{static_cast<struct fuse_bufvec *>(std::malloc(sizeof(struct fuse_bufvec)))};
-  if (!src) {
-    return -ENOMEM;
-  }
-  timer.update_size(size);
-
-// This is a C style macro, but thats fine...
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wold-style-cast"
-#pragma GCC diagnostic ignored "-Wpedantic"
-  *src = FUSE_BUFVEC_INIT(size);
-#pragma GCC diagnostic pop
-
-  src->buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
-  src->buf[0].fd = static_cast<int>(fi->fh);
-  src->buf[0].pos = offset;
-  *bufp = src;
-  return 0;
-}
-#endif
+// #ifdef USE_ZERO_COPY
+// int IOFS::write_buf([[maybe_unused]] const char *path, fuse_bufvec *buf, off_t offset, fuse_file_info *fi) {
+//   TimerGuard timer{IOOp::write_buf, 0};
+//   size_t size{fuse_buf_size(buf)};
+//
+// // This is a C style macro, but thats fine...
+// #pragma GCC diagnostic push
+// #pragma GCC diagnostic ignored "-Wold-style-cast"
+// #pragma GCC diagnostic ignored "-Wpedantic"
+//   struct fuse_bufvec dst = FUSE_BUFVEC_INIT(size);
+// #pragma GCC diagnostic pop
+//
+//   dst.buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
+//   dst.buf[0].fd = static_cast<int>(fi->fh);
+//   dst.buf[0].pos = offset;
+//   ssize_t res{fuse_buf_copy(&dst, buf, FUSE_BUF_SPLICE_NONBLOCK)};
+//   if (res >= 0) {
+//     timer.update_size(static_cast<size_t>(res));
+//   }
+//   return static_cast<int>(res);
+// }
+//
+// int IOFS::read_buf([[maybe_unused]] const char *path, fuse_bufvec **bufp, size_t size, off_t offset,
+//                    fuse_file_info *fi) {
+//   TimerGuard timer{IOOp::read_buf, 0};
+//   // Use malloc, as FUSE will use free, not delete
+//   auto *src{static_cast<struct fuse_bufvec *>(std::malloc(sizeof(struct fuse_bufvec)))};
+//   if (!src) {
+//     return -ENOMEM;
+//   }
+//   timer.update_size(size);
+//
+// // This is a C style macro, but thats fine...
+// #pragma GCC diagnostic push
+// #pragma GCC diagnostic ignored "-Wold-style-cast"
+// #pragma GCC diagnostic ignored "-Wpedantic"
+//   *src = FUSE_BUFVEC_INIT(size);
+// #pragma GCC diagnostic pop
+//
+//   src->buf[0].flags = static_cast<fuse_buf_flags>(FUSE_BUF_IS_FD | FUSE_BUF_FD_SEEK);
+//   src->buf[0].fd = static_cast<int>(fi->fh);
+//   src->buf[0].pos = offset;
+//   *bufp = src;
+//   return 0;
+// }
+// #endif
 
 int IOFS::flock([[maybe_unused]] const char *path, fuse_file_info *fi, int op) {
   TimerGuard timer{IOOp::flock};

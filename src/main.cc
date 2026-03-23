@@ -1,7 +1,10 @@
 #include <sys/stat.h>
 
 #include <CLI11.hh>
+#include <cstdio>
 #include <filesystem>
+#include <vector>
+#include "monitoring.hh"
 
 #define FUSE_USE_VERSION 36
 #include <fuse.h>
@@ -14,6 +17,7 @@ struct CliArgs {
   bool use_allow_other{false};
   bool use_foreground{false};
   bool use_debug{false};
+  std::vector<std::string> plugins;
 
   // positional args
   fs::path mountpoint;
@@ -29,6 +33,8 @@ CliArgs parse_args(int argc, char **argv) {
   app.add_flag("-a,--allow-other", args.use_allow_other, "Use allow_other, see `man mount.fuse`");
   app.add_flag("-f,--foreground", args.use_foreground, "Stay in foreground");
   app.add_flag("-d,--debug", args.use_debug, "Show FUSE debug logs");
+
+  app.add_option("-p,--plugin", args.plugins, "Path to a plugin .so file. Can be specified multiple times.");
 
   app.add_option("mountpoint", args.mountpoint, "FUSE mountpoint")->required()->check(CLI::ExistingDirectory);
   app.add_option("source", args.source_dir, "Source directory")->required()->check(CLI::ExistingDirectory);
@@ -83,10 +89,10 @@ struct fuse_operations iofs_oper = {
 // .bmap    = nullptr,
 // .ioctl   = nullptr,
 // .poll    = nullptr,
-#ifdef USE_ZERO_COPY
-    .write_buf = [](auto... args) { return get_fs()->write_buf(args...); },
-    .read_buf = [](auto... args) { return get_fs()->read_buf(args...); },
-#endif
+// #ifdef USE_ZERO_COPY
+//     .write_buf = [](auto... args) { return get_fs()->write_buf(args...); },
+//     .read_buf = [](auto... args) { return get_fs()->read_buf(args...); },
+// #endif
     .flock = [](auto... args) { return get_fs()->flock(args...); },
     .fallocate = [](auto... args) { return get_fs()->fallocate(args...); },
 };
@@ -94,6 +100,14 @@ struct fuse_operations iofs_oper = {
 
 int main(int argc, char **argv) {
   CliArgs arguments{parse_args(argc, argv)};
+
+  // Load plugins early
+  try {
+    Monitoring::instance().load_plugins(arguments.plugins);
+  } catch (const std::exception& e) {
+    std::println(stderr, "Fatal error loading plugins: {}", e.what());
+    return 1;
+  }
 
   IOFS fs_instance{fs::canonical(arguments.source_dir)};
 
