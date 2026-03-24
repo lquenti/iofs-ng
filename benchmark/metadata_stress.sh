@@ -3,8 +3,7 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 BENCH_DIR="${SCRIPT_DIR}/mnt"
 CONFIG_PREFIX="vanilla_"
 
-rm -rf $BENCH_DIR
-mkdir $BENCH_DIR
+rm -rf $BENCH_DIR/*
 # Latest stable
 wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.19.9.tar.xz
 hyperfine --runs 10 \

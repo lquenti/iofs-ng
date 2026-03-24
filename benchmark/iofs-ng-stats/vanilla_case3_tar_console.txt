@@ -1,0 +1,4 @@
+Benchmark 1: tar xf linux-6.19.9.tar.xz -C /home/lockin/code/iofs-ng/benchmark/mnt
+  Time (mean ± σ):      7.181 s ±  0.201 s    [User: 5.294 s, System: 2.291 s]
+  Range (min … max):    6.881 s …  7.526 s    10 runs
+ 
