@@ -22,7 +22,9 @@
 // atomic and you starting the write)
 
 // CHANGE TO YOUR PREFERENCE
-static constexpr size_t LAST_N = 128;
+// Note: A line is at most ~88 bytes, so `LAST_N * 88` has to stay below `PLUGIN_BUFFER_BYTES` (`src/config.hh`).
+// Otherwise the whole output gets silently dropped.
+static constexpr size_t LAST_N = 1 << 16;
 
 // Whether to count `read_buf`/`write_buf` as well.
 // Obviously, its a noop if its not compiled in iofs-ng
