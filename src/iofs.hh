@@ -95,7 +95,7 @@ enum class IOOp {
 
 class TimerGuard {
  public:
-  using clock_type = std::chrono::high_resolution_clock;
+  using clock_type = std::chrono::steady_clock;
   explicit TimerGuard(IOOp op, size_t init_s = 1) : m_operation{op}, m_size{init_s}, m_start{clock_type::now()} {}
   ~TimerGuard();
   TimerGuard(const TimerGuard &) = delete;
